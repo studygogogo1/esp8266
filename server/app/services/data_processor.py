@@ -7,6 +7,7 @@
 4. 触发自动控制规则
 5. 推送 WebSocket 实时消息给 App
 """
+import json
 import logging
 from datetime import datetime
 from sqlalchemy import select, update
