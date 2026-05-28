@@ -4,7 +4,7 @@
 - 直接调用华为云SDK
 - 不依赖后端服务
 - 从 config.py 读取配置
-- 使用方法: python test_huawei_command.py [on|off] [duration]
+- 使用方法: python3 test_huawei_command.py [on|off] [duration]
 """
 
 import sys
@@ -35,12 +35,14 @@ DEVICE_ID = "6a17a638e094d61592419546_00001"
 # ========== 导入华为云SDK ==========
 try:
     from huaweicloudsdkcore.auth.credentials import BasicCredentials
-    from huaweicloudsdkiotda.v5 import *
+    from huaweicloudsdkiotda.v5 import IoTDAClient
+    from huaweicloudsdkiotda.v5.model.create_command_request import CreateCommandRequest
+    from huaweicloudsdkiotda.v5.model.command import Command
     from huaweicloudsdkcore.region.region import Region
     print("✓ 华为云SDK导入成功")
 except ImportError as e:
     print(f"❌ 导入失败: {e}")
-    print("请先安装: pip install huaweicloudsdkcore huaweicloudsdkiotda")
+    print("请先安装: pip3 install huaweicloudsdkcore huaweicloudsdkiotda")
     sys.exit(1)
 
 
@@ -74,14 +76,16 @@ def send_command(action: str = "on", duration: int = 30):
         request = CreateCommandRequest()
         request.device_id = DEVICE_ID
         request.instance_id = INSTANCE_ID
-        request.body = CreateCommandRequestCommand(
-            command_id=command_id,
-            command_name="pump_control",
-            paras=[
-                {"para_name": "pump", "para_value": action},
-                {"para_name": "duration", "para_value": str(duration)}
-            ]
-        )
+        
+        # 使用正确的 Command 类
+        command = Command()
+        command.command_id = command_id
+        command.command_name = "pump_control"
+        command.paras = [
+            {"para_name": "pump", "para_value": action},
+            {"para_name": "duration", "para_value": str(duration)}
+        ]
+        request.body = command
 
         print(f"  ✓ 命令ID: {command_id}")
         print(f"  ✓ 设备ID: {DEVICE_ID}")
@@ -128,8 +132,8 @@ def main():
             action = sys.argv[1].lower()
         else:
             print(f"未知参数: {sys.argv[1]}")
-            print("用法: python test_huawei_command.py [on|off] [duration]")
-            print("示例: python test_huawei_command.py on 30")
+            print("用法: python3 test_huawei_command.py [on|off] [duration]")
+            print("示例: python3 test_huawei_command.py on 30")
             sys.exit(1)
 
     if len(sys.argv) > 2:
@@ -156,7 +160,7 @@ def main():
         print()
         print("可能的原因:")
         print("  1. 设备不在线 (请到华为云IoTDA控制台确认)")
-        print("  2. 凭证错误 (请检查脚本中的ACCESS_KEY/SECRET_KEY)")
+        print("  2. 凭证错误 (请检查config.py)")
         print("  3. 网络问题 (请检查服务器能否访问华为云)")
     print("=" * 70)
     print()
