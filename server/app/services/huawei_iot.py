@@ -6,123 +6,101 @@
 """
 import json
 import logging
-import asyncio
-import hashlib
-import hmac
 import time
 from typing import Optional
-import httpx
+
+from huaweicloudsdkcore.auth.credentials import BasicCredentials, DerivedCredentials
+from huaweicloudsdkcore.region.region import Region as coreRegion
+from huaweicloudsdkcore.exceptions import exceptions
+from huaweicloudsdkiotda.v5 import *
+from huaweicloudsdkiotda.v5.region.iotda_region import IoTDARegion
+
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
-
-
-def _sign_request(ak: str, sk: str, method: str, uri: str, body: str = "") -> dict:
-    """华为云 API 签名"""
-    timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    date = timestamp[:8]
-
-    signed_headers = "content-type;host;x-sdk-date"
-    content_type = "application/json"
-    host = settings.HUAWEI_ENDPOINT
-
-    body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
-    canonical_request = (
-        f"{method}\n{uri}\n\n"
-        f"content-type:{content_type}\nhost:{host}\nx-sdk-date:{timestamp}\n\n"
-        f"{signed_headers}\n{body_hash}"
-    )
-
-    credential_scope = f"{date}/{settings.HUAWEI_REGION}/iotda/sdk_request"
-    string_to_sign = (
-        f"SDK-HMAC-SHA256\n{timestamp}\n{credential_scope}\n"
-        + hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()
-    )
-
-    def _hmac_sha256(key, msg):
-        return hmac.new(key if isinstance(key, bytes) else key.encode("utf-8"),
-                        msg.encode("utf-8"), hashlib.sha256).digest()
-
-    signing_key = _hmac_sha256(
-        _hmac_sha256(_hmac_sha256(_hmac_sha256(f"SDK{sk}", date), settings.HUAWEI_REGION),
-                     "iotda"),
-        "sdk_request"
-    )
-    signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
-
-    authorization = (
-        f"SDK-HMAC-SHA256 Access={ak}, "
-        f"SignedHeaders={signed_headers}, "
-        f"Signature={signature}"
-    )
-
-    return {
-        "Content-Type": content_type,
-        "Host": host,
-        "X-Sdk-Date": timestamp,
-        "Authorization": authorization,
-    }
 
 
 class HuaweiIoTService:
     """华为云 IoTDA 服务封装"""
 
     def __init__(self):
-        self.base_url = f"https://{settings.HUAWEI_ENDPOINT}"
         self.project_id = settings.HUAWEI_PROJECT_ID
-        self.ak = settings.HUAWEI_ACCESS_KEY
-        self.sk = settings.HUAWEI_SECRET_KEY
+        self.instance_id = settings.HUAWEI_IOTDA_INSTANCE_ID
+        self.endpoint = settings.HUAWEI_ENDPOINT
+
+        # 使用派生密钥（非基础版实例必须）
+        credentials = BasicCredentials(
+            settings.HUAWEI_ACCESS_KEY,
+            settings.HUAWEI_SECRET_KEY
+        ).with_derived_predicate(
+            DerivedCredentials.get_default_derived_predicate()
+        )
+
+        self.client = IoTDAClient.new_builder() \
+            .with_credentials(credentials) \
+            .with_region(coreRegion(id=settings.HUAWEI_REGION, endpoint=self.endpoint)) \
+            .build()
 
     async def send_command(self, device_id: str, command: dict) -> bool:
         """
-        向设备下发命令
+        向设备下发消息
         command 示例: {"pump": "on"} 或 {"pump": "off"}
         """
-        uri = f"/v5/iot/{self.project_id}/devices/{device_id}/messages"
-        body = json.dumps({
-            "message_id": f"cmd_{int(time.time())}",
-            "name": "pump_control",
-            "message": json.dumps(command),
-            "encoding": "none"
-        })
-
-        headers = _sign_request(self.ak, self.sk, "POST", uri, body)
-
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"{self.base_url}{uri}",
-                    content=body,
-                    headers=headers,
-                    timeout=10
-                )
-                if resp.status_code in (200, 201):
-                    logger.info(f"命令下发成功: device={device_id}, cmd={command}")
-                    return True
-                else:
-                    logger.error(f"命令下发失败: {resp.status_code} {resp.text}")
-                    return False
+            request = CreateMessageRequest()
+            request.device_id = device_id
+            request.instance_id = self.instance_id
+            request.body = CreateMessageRequestMessage(
+                message_id=f"cmd_{int(time.time())}",
+                name="pump_control",
+                message=json.dumps(command),
+                encoding="none"
+            )
+            response = self.client.create_message(request)
+            logger.info(f"命令下发成功: device={device_id}, cmd={command}, msg_id={response.message_id}")
+            return True
+        except exceptions.ClientRequestException as e:
+            logger.error(f"命令下发失败: {e.status_code} {e.error_code} {e.error_msg}")
+            return False
         except Exception as e:
             logger.error(f"命令下发异常: {e}")
             return False
 
     async def get_device_shadow(self, device_id: str) -> Optional[dict]:
         """获取设备影子（设备当前状态缓存）"""
-        uri = f"/v5/iot/{self.project_id}/devices/{device_id}/shadow"
-        headers = _sign_request(self.ak, self.sk, "GET", uri)
-
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    f"{self.base_url}{uri}",
-                    headers=headers,
-                    timeout=10
-                )
-                if resp.status_code == 200:
-                    return resp.json()
+            request = ShowDeviceShadowRequest()
+            request.device_id = device_id
+            request.instance_id = self.instance_id
+            response = self.client.show_device_shadow(request)
+            return response.to_dict() if response else None
+        except exceptions.ClientRequestException as e:
+            logger.error(f"获取设备影子失败: {e.status_code} {e.error_code} {e.error_msg}")
         except Exception as e:
-            logger.error(f"获取设备影子失败: {e}")
+            logger.error(f"获取设备影子异常: {e}")
         return None
+
+    async def list_devices(self) -> list:
+        """列出所有设备"""
+        try:
+            request = ListDevicesRequest()
+            request.instance_id = self.instance_id
+            response = self.client.list_devices(request)
+            devices = response.devices or []
+            return [
+                {
+                    "device_id": d.device_id,
+                    "device_name": d.device_name,
+                    "status": d.status,
+                    "last_online_time": d.last_online_time
+                }
+                for d in devices
+            ]
+        except exceptions.ClientRequestException as e:
+            logger.error(f"列出设备失败: {e.status_code} {e.error_code} {e.error_msg}")
+        except Exception as e:
+            logger.error(f"列出设备异常: {e}")
+        return []
 
 
 # 全局服务实例
