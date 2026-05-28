@@ -1,91 +1,108 @@
 #!/usr/bin/env python3
 """
-华为云IoTDA 命令下发测试脚本（独立版）
-- 直接调用华为云SDK
+华为云IoTDA 命令下发测试脚本（简化版）
+- 参考后端 huawei_iot.py 的写法
 - 不依赖后端服务
 - 从 config.py 读取配置
-- 使用方法: python3 test_huawei_command.py [on|off] [duration]
 """
 
 import sys
 import os
 import time
 
-# ========== 添加项目路径，导入config.py ==========
+# 添加项目路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'server'))
 
+# 导入配置
 try:
     from app.core.config import settings
-    print("✓ 从 config.py 读取配置")
+    print("✓ 配置加载成功")
 except ImportError as e:
-    print(f"❌ 无法导入 config.py: {e}")
-    print("请确保:")
-    print("  1. 在云端服务器上运行（已有config.py）")
-    print("  2. 或者设置环境变量")
+    print(f"❌ 导入配置失败: {e}")
     sys.exit(1)
 
-# ========== 从config.py读取配置 ==========
-ACCESS_KEY = settings.HUAWEI_ACCESS_KEY
-SECRET_KEY = settings.HUAWEI_SECRET_KEY
-REGION = settings.HUAWEI_REGION
-ENDPOINT = settings.HUAWEI_ENDPOINT
-INSTANCE_ID = settings.HUAWEI_IOTDA_INSTANCE_ID
-DEVICE_ID = "6a17a638e094d61592419546_00001"
-
-# ========== 导入华为云SDK ==========
+# 导入华为云SDK（和 huawei_iot.py 完全一样的导入方式）
 try:
     from huaweicloudsdkcore.auth.credentials import BasicCredentials
-    from huaweicloudsdkiotda.v5 import IoTDAClient
-    from huaweicloudsdkiotda.v5.model.create_command_request import CreateCommandRequest
-    from huaweicloudsdkiotda.v5.model.command import Command
+    from huaweicloudsdkiotda.v5 import *
     from huaweicloudsdkcore.region.region import Region
     print("✓ 华为云SDK导入成功")
 except ImportError as e:
-    print(f"❌ 导入失败: {e}")
-    print("请先安装: pip3 install huaweicloudsdkcore huaweicloudsdkiotda")
+    print(f"❌ 导入SDK失败: {e}")
     sys.exit(1)
+
+# 配置
+DEVICE_ID = "6a17a638e094d61592419546_00001"
 
 
 def send_command(action: str = "on", duration: int = 30):
-    """发送命令到设备"""
+    """发送命令到设备（和 huawei_iot.py 完全一样的逻辑）"""
     print()
     print("=" * 70)
     print("  华为云IoTDA 命令下发测试")
     print("=" * 70)
     print()
 
-    # 1. 初始化客户端
+    # 1. 初始化客户端（和 huawei_iot.py 一样）
     print("[1/3] 初始化华为云客户端...")
     try:
-        credentials = BasicCredentials(ACCESS_KEY, SECRET_KEY)
+        # 判断是标准版还是企业版
+        is_standard = "st1.iotda-app" in settings.HUAWEI_ENDPOINT
+        
+        if is_standard:
+            credentials = BasicCredentials(
+                settings.HUAWEI_ACCESS_KEY,
+                settings.HUAWEI_SECRET_KEY
+            )
+        else:
+            from huaweicloudsdkcore.auth.credentials import DerivedCredentials
+            credentials = BasicCredentials(
+                settings.HUAWEI_ACCESS_KEY,
+                settings.HUAWEI_SECRET_KEY
+            ).with_derived_predicate(
+                DerivedCredentials.get_default_derived_predicate()
+            )
+
         client = IoTDAClient.new_builder() \
             .with_credentials(credentials) \
-            .with_region(Region(id=REGION, endpoint=ENDPOINT)) \
+            .with_region(Region(id=settings.HUAWEI_REGION, endpoint=settings.HUAWEI_ENDPOINT)) \
             .build()
+
         print("  ✓ 客户端初始化成功")
-        print(f"  - Endpoint: {ENDPOINT}")
+        print(f"  - Endpoint: {settings.HUAWEI_ENDPOINT}")
         print()
     except Exception as e:
         print(f"  ❌ 初始化失败: {e}")
         return False
 
-    # 2. 构造命令
+    # 2. 构造命令（和 huawei_iot.py 一样）
     print("[2/3] 构造命令...")
     try:
-        command_id = f"test_{int(time.time())}"
         request = CreateCommandRequest()
         request.device_id = DEVICE_ID
-        request.instance_id = INSTANCE_ID
+        request.instance_id = settings.HUAWEI_IOTDA_INSTANCE_ID
+
+        # 使用 globals() 动态获取类，避免导入问题
+        CommandClass = globals().get('CreateCommandRequestCommand')
         
-        # 使用正确的 Command 类
-        command = Command()
-        command.command_id = command_id
-        command.command_name = "pump_control"
-        command.paras = [
-            {"para_name": "pump", "para_value": action},
-            {"para_name": "duration", "para_value": str(duration)}
-        ]
-        request.body = command
+        if CommandClass is None:
+            # 如果找不到，尝试列出所有包含 Command 的类
+            print("  ⚠️  找不到 CreateCommandRequestCommand 类")
+            print("  - 可用的类（包含'Command'）:")
+            for attr in dir(sys.modules[__name__]):
+                if 'Command' in attr and not attr.startswith('_'):
+                    print(f"    - {attr}")
+            return False
+
+        command_id = f"test_{int(time.time())}"
+        request.body = CommandClass(
+            command_id=command_id,
+            command_name="pump_control",
+            paras=[
+                {"para_name": "pump", "para_value": action},
+                {"para_name": "duration", "para_value": str(duration)}
+            ]
+        )
 
         print(f"  ✓ 命令ID: {command_id}")
         print(f"  ✓ 设备ID: {DEVICE_ID}")
@@ -94,6 +111,8 @@ def send_command(action: str = "on", duration: int = 30):
         print()
     except Exception as e:
         print(f"  ❌ 构造失败: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
     # 3. 发送命令
@@ -123,6 +142,10 @@ def send_command(action: str = "on", duration: int = 30):
 
 
 def main():
+    print()
+    print("🚀 华为云IoTDA 命令下发测试工具")
+    print()
+
     # 解析命令行参数
     action = "on"
     duration = 30
@@ -133,7 +156,6 @@ def main():
         else:
             print(f"未知参数: {sys.argv[1]}")
             print("用法: python3 test_huawei_command.py [on|off] [duration]")
-            print("示例: python3 test_huawei_command.py on 30")
             sys.exit(1)
 
     if len(sys.argv) > 2:
@@ -146,9 +168,9 @@ def main():
     if action == "off":
         duration = 0
 
-    print()
-    print("🚀 开始测试...")
     print(f"⏰ 时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"目标设备: {DEVICE_ID}")
+    print()
 
     result = send_command(action, duration)
 
