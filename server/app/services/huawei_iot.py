@@ -62,46 +62,39 @@ class HuaweiIoTService:
 
     async def send_command(self, device_id: str, command: dict) -> bool:
         """
-        向设备下发消息（MQTT 消息下发）
-        command 示例: {"pump": "on"} 或 {"pump": "off"}
+        向设备下发命令（Command Delivery）
+        设备订阅的 topic: $oc/devices/{device_id}/sys/commands/#
         """
         try:
             # ===== 详细日志：记录下发的命令 =====
             logger.info("=" * 80)
-            logger.info(f"[命令下发] 开始下发消息")
+            logger.info(f"[命令下发] 开始下发命令")
             logger.info(f"[命令下发] device_id: {device_id}")
             logger.info(f"[命令下发] command: {json.dumps(command, ensure_ascii=False)}")
 
-            # 构造请求 - 使用 create_message API（消息下发）
-            request = CreateMessageRequest()
+            # 构造请求 - 使用 create_command API（命令下发）
+            request = CreateCommandRequest()
             request.device_id = device_id
             request.instance_id = self.instance_id
 
-            message_id = f"msg_{int(time.time())}"
-            
-            # 消息下发需要指定 topic（设备订阅的主题）
-            # ESP8266 订阅的主题: $oc/devices/{device_id}/user/pump
-            topic = f"$oc/devices/{device_id}/user/pump"
-            
-            request.body = CreateMessageRequestMessage(
-                message_id=message_id,
-                name="pump_control",
-                message=json.dumps(command),
-                topic=topic,
-                encoding="none"
+            command_id = f"cmd_{int(time.time())}"
+            request.body = CreateCommandRequestCommand(
+                command_id=command_id,
+                command_name="pump_control",
+                paras=[{"para_name": k, "para_value": str(v)} for k, v in command.items()]
             )
 
-            logger.info(f"[命令下发] message_id: {message_id}")
-            logger.info(f"[命令下发] topic: {topic}")
-            logger.info(f"[命令下发] message: {json.dumps(command)}")
+            logger.info(f"[命令下发] command_id: {command_id}")
+            logger.info(f"[命令下发] command_name: pump_control")
+            logger.info(f"[命令下发] paras: {request.body.paras}")
 
             # 发送请求
             logger.info(f"[命令下发] 正在调用华为云 API...")
-            response = self.client.create_message(request)
+            response = self.client.create_command(request)
 
             # 记录响应
-            logger.info(f"[命令下发] [OK] 消息下发成功!")
-            logger.info(f"[命令下发] response.message_id: {response.message_id}")
+            logger.info(f"[命令下发] [OK] 命令下发成功!")
+            logger.info(f"[命令下发] response.command_id: {response.command_id}")
             logger.info("=" * 80)
 
             return True
