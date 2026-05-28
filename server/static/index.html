@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ESP8266 IoT 控制平台</title>
+<style>
+:root {
+  --bg: #0f172a;
+  --card: #1e293b;
+  --card-hover: #273548;
+  --text: #e2e8f0;
+  --text-dim: #94a3b8;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --border: #334155;
+  --radius: 12px;
+  --shadow: 0 4px 24px rgba(0,0,0,0.3);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg); color: var(--text);
+  min-height: 100vh;
+}
+/* Header */
+.header {
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 24px;
+  display: flex; align-items: center; justify-content: space-between;
+  position: sticky; top: 0; z-index: 100;
+}
+.header h1 { font-size: 20px; font-weight: 600; }
+.header .status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); }
+.header .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+/* Tabs */
+.tabs {
+  display: flex; gap: 4px; padding: 12px 24px;
+  background: rgba(15,23,42,0.8); backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border); overflow-x: auto;
+}
+.tab {
+  padding: 8px 20px; border-radius: 8px; font-size: 14px; cursor: pointer;
+  color: var(--text-dim); border: 1px solid transparent; background: transparent;
+  transition: all 0.2s; white-space: nowrap;
+}
+.tab:hover { color: var(--text); background: var(--card); }
+.tab.active { color: #fff; background: var(--accent); border-color: var(--accent); }
+
+/* Content */
+.content { padding: 24px; max-width: 1200px; margin: 0 auto; }
+.page { display: none; }
+.page.active { display: block; }
+
+/* Cards */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 20px;
+  transition: all 0.2s;
+}
+.card:hover { background: var(--card-hover); box-shadow: var(--shadow); }
+.card .label { font-size: 13px; color: var(--text-dim); margin-bottom: 8px; }
+.card .value { font-size: 32px; font-weight: 700; }
+.card .unit { font-size: 14px; color: var(--text-dim); font-weight: 400; }
+.card .sub { font-size: 12px; color: var(--text-dim); margin-top: 6px; }
+.card .icon { font-size: 28px; margin-bottom: 8px; }
+
+.temp-high { color: var(--danger); }
+.temp-ok { color: var(--success); }
+.temp-warm { color: var(--warning); }
+
+/* Device list */
+.device-list { display: flex; flex-direction: column; gap: 12px; }
+.device-item {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 20px;
+  display: flex; align-items: center; justify-content: space-between;
+  transition: all 0.2s;
+}
+.device-item:hover { background: var(--card-hover); }
+.device-info { display: flex; flex-direction: column; gap: 4px; }
+.device-name { font-size: 16px; font-weight: 600; }
+.device-id { font-size: 12px; color: var(--text-dim); font-family: monospace; }
+.device-status { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; }
+.status-dot.online { background: var(--success); }
+.status-dot.offline { background: var(--text-dim); }
+
+/* Buttons */
+.btn {
+  padding: 10px 20px; border-radius: 8px; border: none; font-size: 14px;
+  font-weight: 500; cursor: pointer; transition: all 0.2s;
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-success { background: var(--success); color: #fff; }
+.btn-success:hover { background: #16a34a; }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-danger:hover { background: #dc2626; }
+.btn-outline { background: transparent; color: var(--text); border: 1px solid var(--border); }
+.btn-outline:hover { background: var(--card); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-sm { padding: 6px 14px; font-size: 13px; }
+
+/* Pump control */
+.pump-panel {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 24px;
+  display: flex; flex-direction: column; align-items: center; gap: 20px;
+}
+.pump-indicator {
+  width: 120px; height: 120px; border-radius: 50%;
+  border: 4px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: 600;
+  transition: all 0.3s;
+}
+.pump-indicator.on {
+  border-color: var(--success); color: var(--success);
+  background: rgba(34,197,94,0.1); box-shadow: 0 0 30px rgba(34,197,94,0.2);
+}
+.pump-indicator.off {
+  border-color: var(--text-dim); color: var(--text-dim);
+}
+.pump-actions { display: flex; gap: 12px; }
+.duration-input {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 16px; color: var(--text); font-size: 14px; width: 80px; text-align: center;
+}
+
+/* Chart */
+.chart-container {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 20px; margin-bottom: 16px;
+}
+.chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.chart-title { font-size: 16px; font-weight: 600; }
+.chart-controls { display: flex; gap: 8px; }
+.chart-area { width: 100%; height: 300px; position: relative; overflow: hidden; }
+.chart-area canvas { width: 100%; height: 100%; }
+
+/* Alerts */
+.alert-list { display: flex; flex-direction: column; gap: 8px; }
+.alert-item {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 14px 18px;
+  display: flex; align-items: center; justify-content: space-between;
+  transition: all 0.2s;
+}
+.alert-item.unread { border-left: 3px solid var(--warning); }
+.alert-item .alert-info { display: flex; flex-direction: column; gap: 4px; }
+.alert-item .alert-type { font-size: 14px; font-weight: 600; }
+.alert-item .alert-detail { font-size: 12px; color: var(--text-dim); }
+.alert-item .alert-time { font-size: 12px; color: var(--text-dim); }
+
+/* Rules */
+.rule-item {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 16px;
+  display: flex; align-items: center; justify-content: space-between;
+  transition: all 0.2s;
+}
+.rule-toggle {
+  width: 44px; height: 24px; border-radius: 12px;
+  background: var(--border); cursor: pointer; transition: all 0.2s;
+  position: relative;
+}
+.rule-toggle.on { background: var(--success); }
+.rule-toggle::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: #fff; transition: all 0.2s;
+}
+.rule-toggle.on::after { left: 22px; }
+
+/* Loading */
+.loading { text-align: center; padding: 40px; color: var(--text-dim); }
+.spinner {
+  width: 32px; height: 32px; border: 3px solid var(--border);
+  border-top-color: var(--accent); border-radius: 50%;
+  animation: spin 0.8s linear infinite; margin: 0 auto 12px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Empty */
+.empty { text-align: center; padding: 40px; color: var(--text-dim); font-size: 14px; }
+
+/* Toast */
+.toast {
+  position: fixed; top: 20px; right: 20px; z-index: 999;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 20px; font-size: 14px;
+  box-shadow: var(--shadow); animation: slideIn 0.3s ease;
+  display: none;
+}
+.toast.show { display: block; }
+.toast.success { border-color: var(--success); }
+.toast.error { border-color: var(--danger); }
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .header { padding: 12px 16px; }
+  .header h1 { font-size: 17px; }
+  .tabs { padding: 8px 12px; }
+  .tab { padding: 6px 14px; font-size: 13px; }
+  .content { padding: 16px; }
+  .cards { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .card .value { font-size: 24px; }
+  .device-item { flex-direction: column; align-items: flex-start; gap: 12px; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🌿 ESP8266 IoT 控制平台</h1>
+  <div class="status"><span class="dot"></span> 系统运行中</div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-page="dashboard">📊 仪表盘</div>
+  <div class="tab" data-page="devices">📱 设备管理</div>
+  <div class="tab" data-page="history">📈 历史数据</div>
+  <div class="tab" data-page="alerts">🔔 告警记录</div>
+  <div class="tab" data-page="rules">⚙️ 控制规则</div>
+</div>
+
+<div class="content">
+  <!-- 仪表盘 -->
+  <div id="page-dashboard" class="page active">
+    <div class="cards" id="dashboard-cards"></div>
+    <div class="pump-panel" id="pump-panel" style="display:none">
+      <div class="pump-indicator off" id="pump-indicator">💧 水泵</div>
+      <div class="pump-actions">
+        <input type="number" class="duration-input" id="pump-duration" value="30" min="5" max="300" placeholder="秒">
+        <button class="btn btn-success" onclick="controlPump('on')">▶ 开启</button>
+        <button class="btn btn-danger" onclick="controlPump('off')">⏹ 关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 设备管理 -->
+  <div id="page-devices" class="page">
+    <div class="device-list" id="device-list"></div>
+  </div>
+
+  <!-- 历史数据 -->
+  <div id="page-history" class="page">
+    <div style="margin-bottom:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <select id="history-device" style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 16px;color:var(--text);font-size:14px"></select>
+      <button class="btn btn-outline btn-sm" onclick="loadHistory(6)">6小时</button>
+      <button class="btn btn-outline btn-sm" onclick="loadHistory(24)">24小时</button>
+      <button class="btn btn-outline btn-sm" onclick="loadHistory(72)">3天</button>
+    </div>
+    <div class="chart-container">
+      <div class="chart-header">
+        <span class="chart-title">温度变化</span>
+      </div>
+      <div class="chart-area"><canvas id="temp-chart"></canvas></div>
+    </div>
+    <div class="chart-container">
+      <div class="chart-header">
+        <span class="chart-title">湿度 & 土壤湿度</span>
+      </div>
+      <div class="chart-area"><canvas id="humidity-chart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- 告警记录 -->
+  <div id="page-alerts" class="page">
+    <div style="margin-bottom:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <select id="alert-device" style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 16px;color:var(--text);font-size:14px"></select>
+      <button class="btn btn-outline btn-sm" onclick="loadAlerts()">🔄 刷新</button>
+    </div>
+    <div class="alert-list" id="alert-list"></div>
+  </div>
+
+  <!-- 控制规则 -->
+  <div id="page-rules" class="page">
+    <div style="margin-bottom:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <select id="rule-device" style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 16px;color:var(--text);font-size:14px"></select>
+      <button class="btn btn-outline btn-sm" onclick="loadRules()">🔄 刷新</button>
+    </div>
+    <div id="rule-list"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ====== 全局状态 ======
+const API = '';
+let currentDevice = '';
+
+// ====== Tab 切换 ======
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('page-' + tab.dataset.page).classList.add('active');
+    const page = tab.dataset.page;
+    if (page === 'dashboard') loadDashboard();
+    if (page === 'devices') loadDevices();
+    if (page === 'history') loadHistory(24);
+    if (page === 'alerts') loadAlerts();
+    if (page === 'rules') loadRules();
+  });
+});
+
+// ====== Toast ======
+function showToast(msg, type = 'success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast ' + type + ' show';
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// ====== API 调用 ======
+async function api(path, options = {}) {
+  const res = await fetch(API + path, {
+    headers: { 'Content-Type': 'application/json', ...options.headers },
+    ...options
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+// ====== 加载设备列表 ======
+async function getDevices() {
+  const devices = await api('/api/devices/');
+  return devices;
+}
+
+// ====== 仪表盘 ======
+async function loadDashboard() {
+  const cards = document.getElementById('dashboard-cards');
+  const panel = document.getElementById('pump-panel');
+  cards.innerHTML = '<div class="loading"><div class="spinner"></div>加载中...</div>';
+
+  try {
+    const devices = await getDevices();
+    if (!devices.length) {
+      cards.innerHTML = '<div class="empty">暂无设备，请先在华为云 IoTDA 注册设备</div>';
+      panel.style.display = 'none';
+      return;
+    }
+
+    const d = devices[0];
+    currentDevice = d.device_id;
+
+    const temp = d.last_temperature;
+    const humi = d.last_humidity;
+    const soil = d.last_soil_moisture;
+    let tempClass = 'temp-ok';
+    if (temp > 30) tempClass = 'temp-high';
+    else if (temp > 25) tempClass = 'temp-warm';
+
+    cards.innerHTML = `
+      <div class="card">
+        <div class="icon">🌡️</div>
+        <div class="label">温度</div>
+        <div class="value ${tempClass}">${temp != null ? temp.toFixed(1) : '--'}<span class="unit">°C</span></div>
+        <div class="sub">实时环境温度</div>
+      </div>
+      <div class="card">
+        <div class="icon">💧</div>
+        <div class="label">空气湿度</div>
+        <div class="value">${humi != null ? humi.toFixed(1) : '--'}<span class="unit">%</span></div>
+        <div class="sub">实时空气湿度</div>
+      </div>
+      <div class="card">
+        <div class="icon">🌱</div>
+        <div class="label">土壤湿度</div>
+        <div class="value">${soil != null ? soil.toFixed(1) : '--'}<span class="unit">%</span></div>
+        <div class="sub">实时土壤湿度</div>
+      </div>
+      <div class="card">
+        <div class="icon">📶</div>
+        <div class="label">WiFi 信号</div>
+        <div class="value">${d.wifi_signal != null ? d.wifi_signal : '--'}<span class="unit">dBm</span></div>
+        <div class="sub">设备: ${d.device_name || d.device_id.slice(0,12)}</div>
+      </div>
+    `;
+
+    // 水泵控制面板
+    panel.style.display = 'flex';
+    updatePumpUI(d.pump_status);
+  } catch (e) {
+    cards.innerHTML = '<div class="empty">加载失败: ' + e.message + '</div>';
+  }
+}
+
+function updatePumpUI(status) {
+  const indicator = document.getElementById('pump-indicator');
+  indicator.className = 'pump-indicator ' + (status ? 'on' : 'off');
+  indicator.textContent = status ? '💧 浇水中' : '💧 水泵';
+}
+
+// ====== 水泵控制 ======
+async function controlPump(action) {
+  const duration = action === 'on' ? parseInt(document.getElementById('pump-duration').value) || 30 : undefined;
+  try {
+    await api(`/api/devices/${currentDevice}/pump`, {
+      method: 'POST',
+      body: JSON.stringify({ action, duration })
+    });
+    showToast(action === 'on' ? `水泵已开启，持续 ${duration} 秒` : '水泵已关闭');
+    updatePumpUI(action === 'on');
+    setTimeout(loadDashboard, 2000); // 刷新状态
+  } catch (e) {
+    showToast('操作失败: ' + e.message, 'error');
+  }
+}
+
+// ====== 设备管理 ======
+async function loadDevices() {
+  const list = document.getElementById('device-list');
+  list.innerHTML = '<div class="loading"><div class="spinner"></div>加载中...</div>';
+
+  try {
+    const devices = await getDevices();
+    if (!devices.length) {
+      list.innerHTML = '<div class="empty">暂无设备</div>';
+      return;
+    }
+
+    list.innerHTML = devices.map(d => `
+      <div class="device-item">
+        <div class="device-info">
+          <span class="device-name">${d.device_name || '未命名设备'}</span>
+          <span class="device-id">ID: ${d.device_id}</span>
+          <div class="device-status">
+            <span class="status-dot ${d.is_online ? 'online' : 'offline'}"></span>
+            ${d.is_online ? '在线' : '离线'}
+            ${d.last_online ? ' · 最后在线: ' + new Date(d.last_online).toLocaleString() : ''}
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;align-items:center">
+          <div style="text-align:right">
+            <div style="font-size:14px">🌡️ ${d.last_temperature != null ? d.last_temperature.toFixed(1)+'°C' : '--'}</div>
+            <div style="font-size:14px">💧 ${d.last_humidity != null ? d.last_humidity.toFixed(1)+'%' : '--'}</div>
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="selectDevice('${d.device_id}')">查看</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    list.innerHTML = '<div class="empty">加载失败: ' + e.message + '</div>';
+  }
+}
+
+// ====== 历史数据 ======
+async function loadHistory(hours) {
+  // 填充设备选择
+  const sel = document.getElementById('history-device');
+  if (!sel.options.length) {
+    try {
+      const devices = await getDevices();
+      sel.innerHTML = devices.map(d => `<option value="${d.device_id}">${d.device_name || d.device_id.slice(0,12)}</option>`).join('');
+    } catch(e) {}
+  }
+
+  const deviceId = sel.value || currentDevice;
+  if (!deviceId) return;
+
+  try {
+    const data = await api(`/api/sensor/${deviceId}/history?hours=${hours}&limit=200`);
+    drawTempChart(data.data);
+    drawHumidityChart(data.data);
+  } catch (e) {
+    showToast('加载历史数据失败: ' + e.message, 'error');
+  }
+}
+
+function drawTempChart(data) {
+  const canvas = document.getElementById('temp-chart');
+  if (!data.length) { canvas.parentElement.innerHTML = '<div class="empty">暂无数据</div>'; return; }
+  drawLineChart(canvas, data, 'temperature', '#ef4444', '温度 (°C)');
+}
+
+function drawHumidityChart(data) {
+  const canvas = document.getElementById('humidity-chart');
+  if (!data.length) { canvas.parentElement.innerHTML = '<div class="empty">暂无数据</div>'; return; }
+  drawLineChart(canvas, data, 'humidity', '#3b82f6', '空气湿度 (%)', 'soil_moisture', '#22c55e', '土壤湿度 (%)');
+}
+
+function drawLineChart(canvas, data, key1, color1, label1, key2, color2, label2) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.parentElement.clientWidth;
+  const H = 300;
+  canvas.width = W * 2;
+  canvas.height = H * 2;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.scale(2, 2);
+
+  const pad = { top: 20, right: 40, bottom: 40, left: 60 };
+  const pw = W - pad.left - pad.right;
+  const ph = H - pad.top - pad.bottom;
+
+  // 计算范围
+  let min = Infinity, max = -Infinity;
+  const vals1 = data.map(d => d[key1]).filter(v => v != null);
+  const vals2 = key2 ? data.map(d => d[key2]).filter(v => v != null) : [];
+  [...vals1, ...vals2].forEach(v => { if (v < min) min = v; if (v > max) max = v; });
+  if (min === Infinity) { min = 0; max = 100; }
+  const range = max - min || 1;
+  min -= range * 0.1; max += range * 0.1;
+
+  // 清空
+  ctx.clearRect(0, 0, W, H);
+
+  // 网格
+  ctx.strokeStyle = '#334155'; ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + (ph / 4) * i;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+    const val = max - ((max - min) / 4) * i;
+    ctx.fillStyle = '#94a3b8'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(val.toFixed(1), pad.left - 8, y + 4);
+  }
+
+  // X 轴标签
+  ctx.textAlign = 'center';
+  const step = Math.max(1, Math.floor(data.length / 6));
+  for (let i = 0; i < data.length; i += step) {
+    const x = pad.left + (pw / (data.length - 1)) * i;
+    const t = new Date(data[i].time);
+    ctx.fillText(t.getHours().toString().padStart(2,'0')+':'+t.getMinutes().toString().padStart(2,'0'), x, H - pad.bottom + 20);
+  }
+
+  // 画线
+  function drawLine(key, color) {
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
+    let started = false;
+    data.forEach((d, i) => {
+      if (d[key] == null) { started = false; return; }
+      const x = pad.left + (pw / (data.length - 1)) * i;
+      const y = pad.top + ph - ((d[key] - min) / (max - min)) * ph;
+      if (!started) { ctx.moveTo(x, y); started = true; }
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  drawLine(key1, color1);
+  if (key2) drawLine(key2, color2);
+
+  // 图例
+  ctx.font = '12px sans-serif';
+  ctx.fillStyle = color1; ctx.fillRect(W - pad.right - 120, 8, 12, 12);
+  ctx.fillStyle = '#e2e8f0'; ctx.textAlign = 'left'; ctx.fillText(label1, W - pad.right - 104, 18);
+  if (key2) {
+    ctx.fillStyle = color2; ctx.fillRect(W - pad.right - 120, 28, 12, 12);
+    ctx.fillStyle = '#e2e8f0'; ctx.fillText(label2, W - pad.right - 104, 38);
+  }
+}
+
+// ====== 告警 ======
+async function loadAlerts() {
+  const sel = document.getElementById('alert-device');
+  if (!sel.options.length) {
+    try {
+      const devices = await getDevices();
+      sel.innerHTML = devices.map(d => `<option value="${d.device_id}">${d.device_name || d.device_id.slice(0,12)}</option>`).join('');
+    } catch(e) {}
+  }
+
+  const deviceId = sel.value || currentDevice;
+  const list = document.getElementById('alert-list');
+  if (!deviceId) { list.innerHTML = '<div class="empty">请先选择设备</div>'; return; }
+
+  list.innerHTML = '<div class="loading"><div class="spinner"></div>加载中...</div>';
+
+  try {
+    const data = await api(`/api/alerts/${deviceId}/list?days=7`);
+    if (!data.alerts.length) {
+      list.innerHTML = '<div class="empty">🎉 最近7天没有告警记录</div>';
+      return;
+    }
+
+    list.innerHTML = data.alerts.map(a => `
+      <div class="alert-item ${a.is_read ? '' : 'unread'}">
+        <div class="alert-info">
+          <span class="alert-type">${getAlertIcon(a.type)} ${getAlertName(a.type)}</span>
+          <span class="alert-detail">当前值: ${a.value} | 阈值: ${a.threshold}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <span class="alert-time">${new Date(a.time).toLocaleString()}</span>
+          ${a.is_read ? '' : `<button class="btn btn-outline btn-sm" onclick="markRead('${deviceId}',${a.id})">标记已读</button>`}
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    list.innerHTML = '<div class="empty">加载失败: ' + e.message + '</div>';
+  }
+}
+
+function getAlertIcon(type) { const m = { temp_high: '🔥', temp_low: '❄️', humidity_low: '🏜️', soil_dry: '🌵' }; return m[type] || '⚠️'; }
+function getAlertName(type) { const m = { temp_high: '温度过高', temp_low: '温度过低', humidity_low: '湿度偏低', soil_dry: '土壤干燥' }; return m[type] || type; }
+
+async function markRead(deviceId, alertId) {
+  try {
+    await api(`/api/alerts/${deviceId}/read/${alertId}`, { method: 'POST' });
+    loadAlerts();
+  } catch (e) { showToast('操作失败', 'error'); }
+}
+
+// ====== 控制规则 ======
+async function loadRules() {
+  const sel = document.getElementById('rule-device');
+  if (!sel.options.length) {
+    try {
+      const devices = await getDevices();
+      sel.innerHTML = devices.map(d => `<option value="${d.device_id}">${d.device_name || d.device_id.slice(0,12)}</option>`).join('');
+    } catch(e) {}
+  }
+
+  const deviceId = sel.value || currentDevice;
+  const list = document.getElementById('rule-list');
+  if (!deviceId) { list.innerHTML = '<div class="empty">请先选择设备</div>'; return; }
+
+  list.innerHTML = '<div class="loading"><div class="spinner"></div>加载中...</div>';
+
+  try {
+    const rules = await api(`/api/rules/${deviceId}`);
+    if (!rules.length) {
+      list.innerHTML = '<div class="empty">暂无自动控制规则</div>';
+      return;
+    }
+
+    list.innerHTML = rules.map(r => `
+      <div class="rule-item">
+        <div>
+          <div style="font-size:15px;font-weight:600">${r.rule_name}</div>
+          <div style="font-size:13px;color:var(--text-dim);margin-top:4px">
+            ${r.condition} → ${r.action === 'pump_on' ? '开启水泵' : r.action} ${r.action_duration}秒
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <span style="font-size:13px;color:var(--text-dim)">${r.enabled ? '启用' : '停用'}</span>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    list.innerHTML = '<div class="empty">加载失败: ' + e.message + '</div>';
+  }
+}
+
+// ====== 选择设备 ======
+function selectDevice(id) {
+  currentDevice = id;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelector('[data-page="dashboard"]').classList.add('active');
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-dashboard').classList.add('active');
+  loadDashboard();
+}
+
+// ====== 初始化 ======
+loadDashboard();
+
+// 30 秒自动刷新仪表盘
+setInterval(() => {
+  if (document.getElementById('page-dashboard').classList.contains('active')) {
+    loadDashboard();
+  }
+}, 30000);
+
+// 响应窗口大小变化重绘图表
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (document.getElementById('page-history').classList.contains('active')) {
+      loadHistory(24);
+    }
+  }, 300);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,291 @@
+#ifndef MQTT_MANAGER_H
+#define MQTT_MANAGER_H
+
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+#include <WiFiUdp.h>
+#include <sha256.h>
+#include "config.h"
+#include "oled_display.h"
+#include "pump_controller.h"
+
+// ==================== 全局 MQTT 对象声明 ====================
+extern WiFiClient espClient;
+extern PubSubClient mqttClient;
+
+// ==================== NTP 时间同步 ====================
+// 获取 UTC 时间戳字符串，格式: 20260528T203000Z
+inline String ntpGetTimestamp() {
+    WiFiUDP ntpUDP;
+    const char* ntpServer = "ntp.aliyun.com";
+    const int ntpPort = 123;
+
+    ntpUDP.begin(ntpPort);
+
+    // 发送 NTP 请求
+    byte packet[48];
+    memset(packet, 0, 48);
+    packet[0] = 0b11100011; // LI, Version, Mode
+    packet[1] = 0;          // Stratum
+    packet[2] = 6;          // Polling Interval
+    packet[3] = 0xEC;       // Peer Clock Precision
+
+    if (ntpUDP.beginPacket(ntpServer, ntpPort) != 1) {
+        ntpUDP.end();
+        return "";
+    }
+    ntpUDP.write(packet, 48);
+    ntpUDP.endPacket();
+
+    // 等待响应
+    int timeout = 0;
+    while (ntpUDP.parsePacket() == 0 && timeout < 10) {
+        delay(100);
+        timeout++;
+    }
+
+    if (ntpUDP.parsePacket() == 0) {
+        ntpUDP.end();
+        Serial.println("[NTP] 时间同步失败");
+        return "";
+    }
+
+    ntpUDP.read(packet, 48);
+    ntpUDP.end();
+
+    // NTP 时间从 1900年1月1日开始，转换为 Unix 时间戳（1970年起）
+    unsigned long highWord = word(packet[40], packet[41]);
+    unsigned long lowWord  = word(packet[42], packet[43]);
+    unsigned long secsSince1900 = highWord << 16 | lowWord;
+    unsigned long unixTime = secsSince1900 - 2208988800UL + NTP_OFFSET;
+
+    // 格式化为 20260528T203000Z
+    struct tm* tm_info = gmtime((time_t*)&unixTime);
+    char ts[17];
+    snprintf(ts, sizeof(ts), "%04d%02d%02dT%02d%02d%02dZ",
+             tm_info->tm_year + 1900,
+             tm_info->tm_mon + 1,
+             tm_info->tm_mday,
+             tm_info->tm_hour,
+             tm_info->tm_min,
+             tm_info->tm_sec);
+
+    Serial.print("[NTP] 时间戳: ");
+    Serial.println(ts);
+    return String(ts);
+}
+
+// ==================== HMAC-SHA256 计算 ====================
+// 使用 ESP8266 内置 SHA256 实现 HMAC-SHA256
+inline void hmacSha256(const char* key, size_t keyLen,
+                       const char* msg, size_t msgLen,
+                       uint8_t* output) {
+    uint8_t k_prime[64];
+    memset(k_prime, 0, 64);
+
+    // 如果密钥 > 64字节，先 hash
+    if (keyLen > 64) {
+        Sha256 sha;
+        sha.begin();
+        sha.write((const uint8_t*)key, keyLen);
+        sha.end(k_prime);
+    } else {
+        memcpy(k_prime, key, keyLen);
+    }
+
+    // 内层: H(K XOR ipad || message)
+    uint8_t inner[64 + 128]; // 64(ipad) + msg
+    for (int i = 0; i < 64; i++) inner[i] = k_prime[i] ^ 0x36;
+    memcpy(inner + 64, msg, msgLen);
+
+    Sha256 sha;
+    uint8_t innerHash[32];
+    sha.begin();
+    sha.write(inner, 64 + msgLen);
+    sha.end(innerHash);
+
+    // 外层: H(K XOR opad || innerHash)
+    uint8_t outer[64 + 32];
+    for (int i = 0; i < 64; i++) outer[i] = k_prime[i] ^ 0x5C;
+    memcpy(outer + 64, innerHash, 32);
+
+    sha.begin();
+    sha.write(outer, 96);
+    sha.end(output);
+}
+
+// Base64 编码
+inline String base64Encode(const uint8_t* data, size_t len) {
+    const char base64Chars[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    String result;
+    result.reserve(len * 4 / 3 + 4);
+
+    for (size_t i = 0; i < len; i += 3) {
+        uint32_t triple = ((uint32_t)data[i] << 16);
+        if (i + 1 < len) triple |= ((uint32_t)data[i + 1] << 8);
+        if (i + 2 < len) triple |= data[i + 2];
+
+        result += base64Chars[(triple >> 18) & 0x3F];
+        result += base64Chars[(triple >> 12) & 0x3F];
+        result += (i + 1 < len) ? base64Chars[(triple >> 6) & 0x3F] : '=';
+        result += (i + 2 < len) ? base64Chars[triple & 0x3F] : '=';
+    }
+    return result;
+}
+
+// ==================== 生成 MQTT 密码 ====================
+// 华为云 IoTDA: Password = Base64(HMAC-SHA256(deviceSecret, timestamp))
+inline String generateMqttPassword(const String& timestamp) {
+    uint8_t hash[32];
+    hmacSha256(DEVICE_SECRET, strlen(DEVICE_SECRET),
+               timestamp.c_str(), timestamp.length(), hash);
+    return base64Encode(hash, 32);
+}
+
+// ==================== MQTT 连接 ====================
+inline bool mqttConnect() {
+    // 获取时间戳
+    String timestamp = ntpGetTimestamp();
+    if (timestamp.length() == 0) {
+        Serial.println("[MQTT] NTP 时间获取失败，无法连接");
+        return false;
+    }
+
+    // 组装 Client ID: {deviceId}_0_0_{timestamp}
+    String clientId = String(DEVICE_ID) + "_0_0_" + timestamp;
+    String username = PRODUCT_ID;
+    String password = generateMqttPassword(timestamp);
+
+    Serial.println("[MQTT] 正在连接华为云 IoTDA...");
+    Serial.print("[MQTT] Client ID: ");
+    Serial.println(clientId);
+
+    // 设置 MQTT 连接参数
+    mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
+    mqttClient.setClientId(clientId.c_str());
+    mqttClient.setCredentials(username.c_str(), password.c_str());
+
+    // 连接
+    bool connected = mqttClient.connect(clientId.c_str(),
+                                         username.c_str(),
+                                         password.c_str());
+
+    if (connected) {
+        Serial.println("[MQTT] 连接成功!");
+
+        // 订阅命令 Topic
+        if (mqttClient.subscribe(TOPIC_MSG_DOWN)) {
+            Serial.print("[MQTT] 已订阅: ");
+            Serial.println(TOPIC_MSG_DOWN);
+        } else {
+            Serial.println("[MQTT] 订阅失败!");
+        }
+        return true;
+    }
+
+    Serial.print("[MQTT] 连接失败, 状态码: ");
+    Serial.println(mqttClient.state());
+    return false;
+}
+
+// ==================== MQTT 消息回调 ====================
+// 处理华为云下发的命令（水泵控制）
+inline void mqttCallback(char* topic, byte* payload, unsigned int length) {
+    // 转为字符串
+    char msg[128];
+    if (length >= sizeof(msg)) length = sizeof(msg) - 1;
+    memcpy(msg, payload, length);
+    msg[length] = '\0';
+
+    Serial.print("[MQTT] 收到命令 [");
+    Serial.print(topic);
+    Serial.print("]: ");
+    Serial.println(msg);
+
+    // 解析 JSON 命令
+    StaticJsonDocument<128> doc;
+    DeserializationError err = deserializeJson(doc, msg);
+
+    if (err) {
+        Serial.print("[MQTT] JSON 解析失败: ");
+        Serial.println(err.c_str());
+        return;
+    }
+
+    // 检查 pump 命令
+    if (doc.containsKey("pump")) {
+        const char* cmd = doc["pump"];
+        if (strcmp(cmd, "on") == 0) {
+            int duration = doc["duration"] | 30; // 默认30秒
+            pumpOn(duration);
+        } else if (strcmp(cmd, "off") == 0) {
+            pumpOff();
+        }
+
+        // 回复执行结果到华为云
+        StaticJsonDocument<128> reply;
+        reply["command"] = "pump";
+        reply["status"] = "success";
+        reply["timestamp"] = ntpGetTimestamp();
+
+        char replyBuf[128];
+        serializeJson(reply, replyBuf);
+        mqttClient.publish(TOPIC_MSG_UP, replyBuf);
+
+        Serial.print("[MQTT] 已回复: ");
+        Serial.println(replyBuf);
+    }
+}
+
+// ==================== 上报传感器数据到华为云 ====================
+inline void mqttReportData(float temp, float humi, float soil,
+                            bool pumpOn, int rssi) {
+    StaticJsonDocument<512> doc;
+
+    // 华为云 IoTDA 属性上报格式
+    JsonObject service = doc.createNestedObject("services");
+    JsonArray services = service.createNestedArray("service_id"); // workaround
+    // 正确格式:
+    doc.clear();
+    JsonArray servicesArr = doc.createNestedArray("services");
+    JsonObject svc = servicesArr.createNestedObject();
+    svc["service_id"] = "sensor";
+    JsonObject props = svc.createNestedObject("properties");
+    props["temperature"] = temp;
+    props["humidity"] = humi;
+    props["soil_moisture"] = soil;
+    props["pump_status"] = pumpOn;
+    props["wifi_signal"] = rssi;
+    props["firmware_version"] = FIRMWARE_VERSION;
+
+    char buf[512];
+    serializeJson(doc, buf);
+
+    if (mqttClient.publish(TOPIC_PROP_REPORT, buf)) {
+        Serial.print("[MQTT] 数据上报成功: ");
+        Serial.println(buf);
+    } else {
+        Serial.println("[MQTT] 数据上报失败!");
+    }
+}
+
+// ==================== MQTT 心跳检查与重连 ====================
+inline void mqttCheckConnection(unsigned long now) {
+    static unsigned long lastCheck = 0;
+    if (now - lastCheck < MQTT_RECONNECT_MS) return;
+    lastCheck = now;
+
+    if (!mqttClient.connected()) {
+        Serial.println("[MQTT] 断开，尝试重连...");
+        mqttConnect();
+    }
+}
+
+// ==================== 获取 MQTT 连接状态 ====================
+inline bool mqttIsConnected() {
+    return mqttClient.connected();
+}
+
+#endif // MQTT_MANAGER_H
