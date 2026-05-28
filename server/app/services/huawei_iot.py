@@ -44,41 +44,46 @@ class HuaweiIoTService:
 
     async def send_command(self, device_id: str, command: dict) -> bool:
         """
-        向设备下发消息
+        向设备下发消息（MQTT 消息下发）
         command 示例: {"pump": "on"} 或 {"pump": "off"}
         """
         try:
             # ===== 详细日志：记录下发的命令 =====
             logger.info("=" * 80)
-            logger.info(f"[命令下发] 开始下发命令")
+            logger.info(f"[命令下发] 开始下发消息")
             logger.info(f"[命令下发] device_id: {device_id}")
             logger.info(f"[命令下发] command: {json.dumps(command, ensure_ascii=False)}")
 
-            # 构造请求
+            # 构造请求 - 使用 create_message API（消息下发）
             request = CreateMessageRequest()
             request.device_id = device_id
             request.instance_id = self.instance_id
 
-            message_id = f"cmd_{int(time.time())}"
+            message_id = f"msg_{int(time.time())}"
+            
+            # 消息下发需要指定 topic（设备订阅的主题）
+            # ESP8266 订阅的主题: $oc/devices/{device_id}/user/pump
+            topic = f"$oc/devices/{device_id}/user/pump"
+            
             request.body = CreateMessageRequestMessage(
                 message_id=message_id,
                 name="pump_control",
                 message=json.dumps(command),
+                topic=topic,
                 encoding="none"
             )
 
             logger.info(f"[命令下发] message_id: {message_id}")
-            logger.info(f"[命令下发] name: pump_control")
-            logger.info(f"[命令下发] encoding: none")
+            logger.info(f"[命令下发] topic: {topic}")
+            logger.info(f"[命令下发] message: {json.dumps(command)}")
 
             # 发送请求
             logger.info(f"[命令下发] 正在调用华为云 API...")
             response = self.client.create_message(request)
 
             # 记录响应
-            logger.info(f"[命令下发] [OK] 命令下发成功!")
+            logger.info(f"[命令下发] [OK] 消息下发成功!")
             logger.info(f"[命令下发] response.message_id: {response.message_id}")
-            logger.info(f"[命令下发] response: {response.to_dict() if response else None}")
             logger.info("=" * 80)
 
             return True
