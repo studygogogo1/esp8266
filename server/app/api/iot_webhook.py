@@ -133,17 +133,37 @@ async def receive_iot_data(request: Request):
 
         # ===== 解析 payload（设备上报的数据）=====
         payload = None
-
-        # 情况1：body 直接是设备上报的数据
-        if isinstance(body, dict) and "services" in body:
+        
+        # 情况0：华为云标准转发格式（notify_data.body.services）
+        if isinstance(body, dict) and "notify_data" in body:
+            notify_data = body.get("notify_data", {})
+            notify_body = notify_data.get("body", {})
+            services = notify_body.get("services", [])
+            
+            if services and isinstance(services[0], dict):
+                # 提取 services[0].properties 作为 payload
+                properties = services[0].get("properties", {})
+                if isinstance(properties, dict):
+                    payload = properties
+                    logger.info("[IoT接收] 数据格式: 华为云 notify_data 格式，已提取 properties")
+                    logger.info(f"[IoT接收] 提取的 properties: {json.dumps(payload, ensure_ascii=False)}")
+                else:
+                    payload = services[0]
+                    logger.info("[IoT接收] 数据格式: 华为云 notify_data 格式，使用 services[0]")
+            else:
+                payload = body
+                logger.warning("[IoT接收] [WARN] notify_data 格式但未找到 services，使用原始 body")
+        
+        # 情况1：body 直接是设备上报的数据（已经包含 services）
+        elif isinstance(body, dict) and "services" in body:
             payload = body
             logger.info("[IoT接收] 数据格式: 直接包含 services（华为云标准格式）")
-
+        
         # 情况2：body 里有 body 字段
         elif isinstance(body, dict) and "body" in body:
             payload = body["body"]
             logger.info("[IoT接收] 数据格式: 包装在 body 字段中")
-
+            
             # 如果 payload 是字符串，尝试解析 JSON
             if isinstance(payload, str):
                 try:
@@ -151,18 +171,18 @@ async def receive_iot_data(request: Request):
                     logger.info("[IoT接收] payload 字符串已解析为 JSON")
                 except Exception as e:
                     logger.warning(f"[IoT接收] [WARN] payload 字符串解析失败: {e}")
-
+        
         # 情况3：body 里有 message 字段
         elif isinstance(body, dict) and "message" in body:
             payload = body["message"]
             logger.info("[IoT接收] 数据格式: 包装在 message 字段中")
-
+            
             if isinstance(payload, str):
                 try:
                     payload = json.loads(payload)
                 except Exception as e:
                     logger.warning(f"[IoT接收] [WARN] message 解析失败: {e}")
-
+        
         # 情况4：body 直接是设备数据（扁平格式）
         else:
             payload = body
