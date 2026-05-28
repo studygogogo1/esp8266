@@ -35,6 +35,55 @@ class PumpControlRequest(BaseModel):
     duration: Optional[int] = 30  # 开泵持续时长（秒），关泵时忽略
 
 
+@router.post("/sync")
+async def sync_devices_from_huawei(db: AsyncSession = Depends(get_db)):
+    """从华为云 IoTDA 同步设备列表到本地数据库"""
+    try:
+        # 从华为云获取设备列表
+        huawei_devices = await huawei_iot.list_devices()
+
+        synced_count = 0
+        for hd in huawei_devices:
+            # 检查设备是否已存在
+            result = await db.execute(
+                select(Device).where(Device.device_id == hd["device_id"])
+            )
+            device = result.scalar_one_or_none()
+
+            if device:
+                # 更新现有设备
+                device.device_name = hd.get("device_name", device.device_name)
+                device.is_online = (hd.get("status") == "online")
+                if hd.get("last_online_time"):
+                    from datetime import datetime
+                    device.last_online = datetime.fromtimestamp(hd["last_online_time"] / 1000)
+            else:
+                # 创建新设备
+                device = Device(
+                    device_id=hd["device_id"],
+                    device_name=hd.get("device_name", ""),
+                    is_online=(hd.get("status") == "online"),
+                    last_temperature=None,
+                    last_humidity=None,
+                    last_soil_moisture=None,
+                    pump_status=False,
+                    wifi_signal=None,
+                    firmware_version="1.0.0"
+                )
+                if hd.get("last_online_time"):
+                    from datetime import datetime
+                    device.last_online = datetime.fromtimestamp(hd["last_online_time"] / 1000)
+                db.add(device)
+
+            synced_count += 1
+
+        await db.commit()
+        return {"success": True, "message": f"成功同步 {synced_count} 个设备"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"同步失败: {str(e)}")
+
+
 @router.get("/", response_model=list[DeviceResponse])
 async def list_devices(db: AsyncSession = Depends(get_db)):
     """获取所有设备列表"""
