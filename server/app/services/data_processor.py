@@ -40,6 +40,13 @@ async def process_sensor_data(db: AsyncSession, device_id: str, data: dict):
     pump_status = data.get("pump_status", False)
     wifi_signal = data.get("wifi_signal")
     firmware_version = data.get("firmware_version", "1.0.0")
+    
+    # ===== 增强日志：打印收到的原始数据 =====
+    logger.info("=" * 80)
+    logger.info(f"[数据处理] 收到设备 {device_id} 的数据:")
+    logger.info(f"[数据处理] 原始 data 对象: {json.dumps(data, ensure_ascii=False, indent=2) if isinstance(data, dict) else data}")
+    logger.info(f"[数据处理] 解析结果: temp={temperature}, humi={humidity}, soil={soil_moisture}, pump={pump_status}")
+    logger.info("=" * 80)
 
     # 1. 存储传感器历史数据
     sensor_record = SensorData(

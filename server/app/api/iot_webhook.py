@@ -50,32 +50,82 @@ async def receive_iot_data(request: Request):
     """
     try:
         # ===== 详细日志：记录收到的所有信息 =====
-        body = await request.json()
-
-        # 记录请求头
-        headers = dict(request.headers)
+        # 先读取原始请求体（未解析）
+        raw_body = await request.body()
         logger.info("=" * 80)
         logger.info("[IoT接收] 收到华为云转发请求")
-        logger.info(f"[IoT接收] 请求头: {json.dumps(headers, ensure_ascii=False)}")
-
-        # 记录原始 body
-        logger.info(f"[IoT接收] 原始数据: {json.dumps(body, ensure_ascii=False)}")
+        
+        # 记录请求头
+        headers = dict(request.headers)
+        logger.info(f"[IoT接收] 请求头: {json.dumps(headers, ensure_ascii=False, indent=2)}")
+        
+        # 记录原始 body（字符串形式）
+        try:
+            raw_text = raw_body.decode('utf-8')
+            logger.info(f"[IoT接收] 原始请求体 (RAW):\n{raw_text}")
+        except Exception as e:
+            logger.warning(f"[IoT接收] 原始请求体解码失败: {e}")
+            logger.info(f"[IoT接收] 原始请求体 (bytes): {raw_body}")
+        
+        # 解析 JSON
+        body = None
+        try:
+            # 尝试解析原始文本
+            if 'raw_text' in locals():
+                body = json.loads(raw_text)
+            else:
+                # 如果 raw_text 未定义，重新读取
+                body = await request.json()
+        except json.JSONDecodeError as e:
+            logger.error(f"[IoT接收] [FAIL] JSON 解析失败: {e}")
+            logger.error(f"[IoT接收] 原始数据: {raw_body}")
+            raise HTTPException(status_code=400, detail="JSON 格式错误")
+        except Exception as e:
+            logger.error(f"[IoT接收] [FAIL] 解析异常: {e}")
+            body = await request.json()  # 最后尝试
+        
+        # 记录解析后的 body（美观格式）
+        logger.info(f"[IoT接收] 解析后的 JSON (美观格式):\n{json.dumps(body, ensure_ascii=False, indent=2)}")
         logger.info(f"[IoT接收] 数据类型: {type(body)}")
+        logger.info(f"[IoT接收] JSON 键列表: {list(body.keys()) if isinstance(body, dict) else 'Not a dict'}")
 
         # ===== 解析 device_id =====
         device_id = None
 
-        # 尝试从不同字段获取 device_id
+        # 尝试从多种可能的地方获取 device_id
         if isinstance(body, dict):
+            # 方式1：直接字段
             device_id = (
                 body.get("device_id") or
                 body.get("deviceId") or
-                body.get("from") or
-                body.get("deviceId_str")
+                body.get("from")
             )
+            
+            # 方式2：华为云标准格式（notify_data.header.device_id）
+            if not device_id and "notify_data" in body:
+                header = body.get("notify_data", {}).get("header", {})
+                device_id = header.get("device_id") or header.get("deviceId")
+                logger.info(f"[IoT接收] 从 notify_data.header 解析 device_id: {device_id}")
+            
+            # 方式3：从 topic 中解析
+            if not device_id and "topic" in body:
+                # topic 格式：$oc/devices/{device_id}/sys/properties/report
+                topic = body.get("topic", "")
+                if "/devices/" in topic:
+                    try:
+                        device_id = topic.split("/devices/")[1].split("/")[0]
+                        logger.info(f"[IoT接收] 从 topic 解析 device_id: {device_id}")
+                    except Exception:
+                        pass
+            
+            # 方式4：从 services[0].deviceId 解析
+            if not device_id and "services" in body:
+                services = body.get("services", [])
+                if services and isinstance(services[0], dict):
+                    device_id = services[0].get("deviceId") or services[0].get("device_id")
+                    logger.info(f"[IoT接收] 从 services[0] 解析 device_id: {device_id}")
 
         if not device_id:
-            # 如果 body 里有 services，尝试从 topic 或其他地方获取
             logger.warning("[IoT接收] [WARN] 无法从 body 中获取 device_id")
             device_id = "unknown"
 
