@@ -10,15 +10,15 @@ class Settings(BaseSettings):
     DEBUG: bool = True
 
     # 数据库
-    DATABASE_URL: str = "sqlite+aiosqlite:///./iot_data.db"
+    DATABASE_URL: str = "sqlite+aiosqlite:///./app.db"
 
-    # 华为云 IoTDA
-    HUAWEI_ACCESS_KEY: str = "HPUAN1B4JPAKJJLLPWM1"
-    HUAWEI_SECRET_KEY: str = "hKbkdYNW61Lhtlu7Iphz7XIKaQUG1PRIrCb15kuX"
+    # 华为云 IoTDA（从环境变量读取，不要硬编码！）
+    HUAWEI_ACCESS_KEY: Optional[str] = None
+    HUAWEI_SECRET_KEY: Optional[str] = None
     HUAWEI_REGION: str = "cn-east-3"
-    HUAWEI_PROJECT_ID: str = "16512cefc56d4bbc9cff96234619b8aa"
-    HUAWEI_ENDPOINT: str = "923924d24d.st1.iotda-app.cn-east-3.myhuaweicloud.com"
-    HUAWEI_IOTDA_INSTANCE_ID: str = "e01941fb-c614-415f-98cb-5d776280d89a"
+    HUAWEI_PROJECT_ID: Optional[str] = None
+    HUAWEI_ENDPOINT: Optional[str] = None
+    HUAWEI_IOTDA_INSTANCE_ID: Optional[str] = None
 
     # OTA
     FIRMWARE_DIR: str = "./firmware"

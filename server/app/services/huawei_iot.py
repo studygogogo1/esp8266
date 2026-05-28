@@ -29,18 +29,36 @@ class HuaweiIoTService:
         self.instance_id = settings.HUAWEI_IOTDA_INSTANCE_ID
         self.endpoint = settings.HUAWEI_ENDPOINT
 
-        # 使用派生密钥（非基础版实例必须）
-        credentials = BasicCredentials(
-            settings.HUAWEI_ACCESS_KEY,
-            settings.HUAWEI_SECRET_KEY
-        ).with_derived_predicate(
-            DerivedCredentials.get_default_derived_predicate()
-        )
+        # 判断是标准版还是企业版
+        # 标准版 endpoint 格式: xxxx.st1.iotda-app.region.myhuaweicloud.com
+        # 企业版 endpoint 格式: iotda.region.myhuaweicloud.com
+        is_standard = "st1.iotda-app" in self.endpoint
+
+        if is_standard:
+            # 标准版：使用基础认证，不需要 DerivedCredentials
+            credentials = BasicCredentials(
+                settings.HUAWEI_ACCESS_KEY,
+                settings.HUAWEI_SECRET_KEY
+            )
+            logger.info("[华为云] 使用标准版认证（BasicCredentials）")
+        else:
+            # 企业版：使用派生认证
+            credentials = BasicCredentials(
+                settings.HUAWEI_ACCESS_KEY,
+                settings.HUAWEI_SECRET_KEY
+            ).with_derived_predicate(
+                DerivedCredentials.get_default_derived_predicate()
+            )
+            logger.info("[华为云] 使用企业版认证（DerivedCredentials）")
 
         self.client = IoTDAClient.new_builder() \
             .with_credentials(credentials) \
             .with_region(CoreRegion(id=settings.HUAWEI_REGION, endpoint=self.endpoint)) \
             .build()
+
+        logger.info(f"[华为云] IoTDA 客户端初始化完成")
+        logger.info(f"[华为云] endpoint: {self.endpoint}")
+        logger.info(f"[华为云] instance_id: {self.instance_id}")
 
     async def send_command(self, device_id: str, command: dict) -> bool:
         """
