@@ -28,7 +28,7 @@
 // 设备密钥（动态生成密码时需要，从华为云设备详情页复制）
 // 如果填了，代码会忽略上面的预生成密码，自动用密钥动态计算
 // 填入密钥后，把下面的 USE_DYNAMIC_PASSWORD 改为 1
-#define DEVICE_SECRET   ""
+#define DEVICE_SECRET   "Cyy542100312"
 #define USE_DYNAMIC_PASSWORD  0  // 1=用密钥动态生成密码, 0=用预生成密码
 
 // ==================== 引脚定义 ====================

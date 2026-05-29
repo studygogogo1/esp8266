@@ -108,7 +108,7 @@ String ntpGetTimestamp() {
 
 // ============================================================
 //        HMAC-SHA256 + Hex（仅 USE_DYNAMIC_PASSWORD=1 时编译）
-//        华为云规则: Password = Hex(HMAC-SHA256(key=时间戳, data=密钥))
+//        华为云规则: Password = Hex(HMAC-SHA256(key=设备密钥, msg=时间戳))
 // ============================================================
 #if USE_DYNAMIC_PASSWORD
 #include <bearssl_hash.h>
@@ -152,10 +152,11 @@ String hexEncode(const uint8_t* data, size_t len) {
 }
 
 String generateMqttPassword(const String& timestamp) {
-    // 华为云规则: key=时间戳, data=设备密钥（注意顺序！）
+    // 华为云规则: key=设备密钥, msg=UTC时间戳(YYYYMMDDHH)
+    // 注意: 顺序必须是 密钥在前，时间戳在后！
     uint8_t hash[32];
-    hmacSha256(timestamp.c_str(), timestamp.length(),
-               DEVICE_SECRET, strlen(DEVICE_SECRET), hash);
+    hmacSha256(DEVICE_SECRET, strlen(DEVICE_SECRET),
+               timestamp.c_str(), timestamp.length(), hash);
     return hexEncode(hash, 32);
 }
 #endif // USE_DYNAMIC_PASSWORD
