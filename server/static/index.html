@@ -438,16 +438,18 @@ function updatePumpUI(status) {
 // ====== 水泵控制 ======
 async function controlPump(action) {
   const duration = action === 'on' ? parseInt(document.getElementById('pump-duration').value) || 30 : undefined;
+  // 先更新水泵 UI 为预期状态（乐观更新）
+  updatePumpUI(action === 'on');
   try {
     await api(`/api/devices/${currentDevice}/pump`, {
       method: 'POST',
       body: JSON.stringify({ action, duration })
     });
     showToast(action === 'on' ? `水泵已开启，持续 ${duration} 秒` : '水泵已关闭');
-    updatePumpUI(action === 'on');
-    setTimeout(loadDashboard, 2000); // 刷新状态
   } catch (e) {
     showToast('操作失败: ' + e.message, 'error');
+    // 恢复 UI
+    loadDashboard();
   }
 }
 

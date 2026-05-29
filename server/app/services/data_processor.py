@@ -63,14 +63,21 @@ async def process_sensor_data(db: AsyncSession, device_id: str, data: dict):
     if device:
         device.is_online = True
         device.last_online = datetime.now()
-        device.last_temperature = temperature
-        device.last_humidity = humidity
-        device.last_soil_moisture = soil_moisture
-        device.pump_status = pump_status
-        device.wifi_signal = wifi_signal
-        device.firmware_version = firmware_version
+        # 只在数据中确实包含对应字段时才更新，避免 command_response 等非传感器消息用 None 覆盖已有有效值
+        if temperature is not None:
+            device.last_temperature = temperature
+        if humidity is not None:
+            device.last_humidity = humidity
+        if soil_moisture is not None:
+            device.last_soil_moisture = soil_moisture
+        if pump_status is not None or "pump_status" in data:
+            device.pump_status = pump_status
+        if wifi_signal is not None:
+            device.wifi_signal = wifi_signal
+        if firmware_version is not None:
+            device.firmware_version = firmware_version
     else:
-        # 首次见到这个设备，自动注册
+        # 首次见到这个设备，自动注册（新设备允许 None 值）
         device = Device(
             device_id=device_id,
             is_online=True,
@@ -78,9 +85,9 @@ async def process_sensor_data(db: AsyncSession, device_id: str, data: dict):
             last_temperature=temperature,
             last_humidity=humidity,
             last_soil_moisture=soil_moisture,
-            pump_status=pump_status,
+            pump_status=pump_status if pump_status is not None else False,
             wifi_signal=wifi_signal,
-            firmware_version=firmware_version,
+            firmware_version=firmware_version or "1.0.0",
         )
         db.add(device)
         logger.info(f"新设备自动注册: {device_id}")
