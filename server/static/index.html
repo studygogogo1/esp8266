@@ -347,7 +347,11 @@ async function getDevices() {
 async function loadDashboard() {
   const cards = document.getElementById('dashboard-cards');
   const panel = document.getElementById('pump-panel');
-  cards.innerHTML = '<div class="loading"><div class="spinner"></div>加载中...</div>';
+
+  // 首次加载显示 loading，后续刷新不显示
+  if (!cards.dataset.loaded) {
+    cards.innerHTML = '<div class="loading"><div class="spinner"></div>加载中...</div>';
+  }
 
   try {
     const devices = await getDevices();
@@ -367,38 +371,61 @@ async function loadDashboard() {
     if (temp > 30) tempClass = 'temp-high';
     else if (temp > 25) tempClass = 'temp-warm';
 
-    cards.innerHTML = `
-      <div class="card">
-        <div class="icon">🌡️</div>
-        <div class="label">温度</div>
-        <div class="value ${tempClass}">${temp != null ? temp.toFixed(1) : '--'}<span class="unit">°C</span></div>
-        <div class="sub">实时环境温度</div>
-      </div>
-      <div class="card">
-        <div class="icon">💧</div>
-        <div class="label">空气湿度</div>
-        <div class="value">${humi != null ? humi.toFixed(1) : '--'}<span class="unit">%</span></div>
-        <div class="sub">实时空气湿度</div>
-      </div>
-      <div class="card">
-        <div class="icon">🌱</div>
-        <div class="label">土壤湿度</div>
-        <div class="value">${soil != null ? soil.toFixed(1) : '--'}<span class="unit">%</span></div>
-        <div class="sub">实时土壤湿度</div>
-      </div>
-      <div class="card">
-        <div class="icon">📶</div>
-        <div class="label">WiFi 信号</div>
-        <div class="value">${d.wifi_signal != null ? d.wifi_signal : '--'}<span class="unit">dBm</span></div>
-        <div class="sub">设备: ${d.device_name || d.device_id.slice(0,12)}</div>
-      </div>
-    `;
+    if (!cards.dataset.loaded) {
+      // 首次加载：创建完整 HTML 结构
+      cards.innerHTML = `
+        <div class="card" id="card-temp">
+          <div class="icon">🌡️</div>
+          <div class="label">温度</div>
+          <div class="value temp-ok"><span class="val-text">--</span><span class="unit">°C</span></div>
+          <div class="sub">实时环境温度</div>
+        </div>
+        <div class="card" id="card-humidity">
+          <div class="icon">💧</div>
+          <div class="label">空气湿度</div>
+          <div class="value"><span class="val-text">--</span><span class="unit">%</span></div>
+          <div class="sub">实时空气湿度</div>
+        </div>
+        <div class="card" id="card-soil">
+          <div class="icon">🌱</div>
+          <div class="label">土壤湿度</div>
+          <div class="value"><span class="val-text">--</span><span class="unit">%</span></div>
+          <div class="sub">实时土壤湿度</div>
+        </div>
+        <div class="card" id="card-wifi">
+          <div class="icon">📶</div>
+          <div class="label">WiFi 信号</div>
+          <div class="value"><span class="val-text">--</span><span class="unit">dBm</span></div>
+          <div class="sub" id="card-device-name">设备: --</div>
+        </div>
+      `;
+      panel.style.display = 'flex';
+      cards.dataset.loaded = '1';
+    }
 
-    // 水泵控制面板
-    panel.style.display = 'flex';
+    // 静默更新数值，不替换整个 HTML
+    updateCardValue('card-temp', temp != null ? temp.toFixed(1) : '--', tempClass);
+    updateCardValue('card-humidity', humi != null ? humi.toFixed(1) : '--');
+    updateCardValue('card-soil', soil != null ? soil.toFixed(1) : '--');
+    updateCardValue('card-wifi', d.wifi_signal != null ? d.wifi_signal : '--');
+    document.getElementById('card-device-name').textContent = '设备: ' + (d.device_name || d.device_id.slice(0,12));
     updatePumpUI(d.pump_status);
   } catch (e) {
-    cards.innerHTML = '<div class="empty">加载失败: ' + e.message + '</div>';
+    if (!cards.dataset.loaded) {
+      cards.innerHTML = '<div class="empty">加载失败: ' + e.message + '</div>';
+    }
+  }
+}
+
+// 静默更新卡片数值（不重新渲染整个卡片）
+function updateCardValue(cardId, value, className) {
+  const card = document.getElementById(cardId);
+  if (!card) return;
+  const valEl = card.querySelector('.val-text');
+  if (valEl) valEl.textContent = value;
+  const valueDiv = card.querySelector('.value');
+  if (valueDiv && className) {
+    valueDiv.className = 'value ' + className;
   }
 }
 
