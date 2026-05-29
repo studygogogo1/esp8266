@@ -590,7 +590,7 @@ function drawPumpChart(data) {
     const t = new Date(data[i].time);
     ctx.fillText(
       (t.getMonth() + 1) + '/' + t.getDate() + ' ' +
-      t.getHours().toString().padStart(2, '0') + ':' + t.getMinutes().toString().padStart(2, '0'),
+      t.getHours().toString().padStart(2, '0') + ':' + t.getMinutes().toString().padStart(2, '0') + ':' + t.getSeconds().toString().padStart(2, '0'),
       x, H - pad.bottom + 16
     );
   }
