@@ -161,17 +161,47 @@ body {
 .alert-item .alert-detail { font-size: 12px; color: var(--text-dim); }
 .alert-item .alert-time { font-size: 12px; color: var(--text-dim); }
 
+/* Modal */
+.modal-overlay {
+  display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,0.6); z-index: 200;
+  align-items: center; justify-content: center;
+}
+.modal-overlay.show { display: flex; }
+.modal {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 24px;
+  width: 90%; max-width: 420px; box-shadow: var(--shadow);
+}
+.modal h3 { font-size: 18px; margin-bottom: 16px; }
+.modal .form-group { margin-bottom: 14px; }
+.modal .form-group label { display: block; font-size: 13px; color: var(--text-dim); margin-bottom: 4px; }
+.modal .form-group input, .modal .form-group select {
+  width: 100%; padding: 10px 14px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg);
+  color: var(--text); font-size: 14px;
+}
+.modal .form-group select { appearance: none; cursor: pointer; }
+.modal .form-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+
 /* Rules */
+.rule-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.rule-list { display: flex; flex-direction: column; gap: 10px; }
 .rule-item {
   background: var(--card); border: 1px solid var(--border);
   border-radius: 8px; padding: 16px;
   display: flex; align-items: center; justify-content: space-between;
   transition: all 0.2s;
 }
+.rule-item:hover { background: var(--card-hover); }
+.rule-item .rule-info { display: flex; flex-direction: column; gap: 4px; }
+.rule-item .rule-name { font-size: 15px; font-weight: 600; }
+.rule-item .rule-desc { font-size: 13px; color: var(--text-dim); }
+.rule-item .rule-actions { display: flex; align-items: center; gap: 10px; }
 .rule-toggle {
   width: 44px; height: 24px; border-radius: 12px;
   background: var(--border); cursor: pointer; transition: all 0.2s;
-  position: relative;
+  position: relative; flex-shrink: 0;
 }
 .rule-toggle.on { background: var(--success); }
 .rule-toggle::after {
@@ -292,11 +322,52 @@ body {
 
   <!-- 控制规则 -->
   <div id="page-rules" class="page">
-    <div style="margin-bottom:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <div class="rule-header">
       <select id="rule-device" style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 16px;color:var(--text);font-size:14px"></select>
-      <button class="btn btn-outline btn-sm" onclick="loadRules()">🔄 刷新</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline btn-sm" onclick="loadRules()">🔄 刷新</button>
+        <button class="btn btn-primary btn-sm" onclick="showRuleModal()">＋ 添加规则</button>
+      </div>
     </div>
-    <div id="rule-list"></div>
+    <div class="rule-list" id="rule-list"></div>
+
+    <!-- 规则编辑弹窗 -->
+    <div class="modal-overlay" id="rule-modal">
+      <div class="modal">
+        <h3 id="rule-modal-title">添加规则</h3>
+        <input type="hidden" id="rule-edit-id">
+        <div class="form-group">
+          <label>规则名称</label>
+          <input type="text" id="rule-name" value="自动浇水" placeholder="例如：自动浇水">
+        </div>
+        <div class="form-group">
+          <label>监测指标</label>
+          <select id="rule-condition-type">
+            <option value="soil_moisture">土壤湿度</option>
+            <option value="humidity">空气湿度</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>触发条件</label>
+          <select id="rule-operator">
+            <option value="lt">小于 (&lt;)</option>
+            <option value="gt">大于 (&gt;)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>阈值</label>
+          <input type="number" id="rule-value" value="25" step="1" placeholder="例如：25">
+        </div>
+        <div class="form-group">
+          <label>浇水时长（秒）</label>
+          <input type="number" id="rule-duration" value="30" min="5" max="300" step="5">
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-outline btn-sm" onclick="closeRuleModal()">取消</button>
+          <button class="btn btn-primary btn-sm" id="rule-save-btn" onclick="saveRule()">保存</button>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -803,25 +874,116 @@ async function loadRules() {
   try {
     const rules = await api(`/api/rules/${deviceId}`);
     if (!rules.length) {
-      list.innerHTML = '<div class="empty">暂无自动控制规则</div>';
+      list.innerHTML = '<div class="empty">暂无自动控制规则，点击"＋ 添加规则"创建</div>';
       return;
     }
 
+    const labels = { soil_moisture: '土壤湿度', humidity: '空气湿度' };
+    const ops = { lt: '<', gt: '>' };
     list.innerHTML = rules.map(r => `
       <div class="rule-item">
-        <div>
-          <div style="font-size:15px;font-weight:600">${r.rule_name}</div>
-          <div style="font-size:13px;color:var(--text-dim);margin-top:4px">
-            ${r.condition} → ${r.action === 'pump_on' ? '开启水泵' : r.action} ${r.action_duration}秒
-          </div>
+        <div class="rule-info">
+          <span class="rule-name">${r.rule_name}</span>
+          <span class="rule-desc">
+            当 ${labels[r.condition_type] || r.condition_type} ${ops[r.condition_operator] || r.condition_operator} ${r.condition_value}% 时
+            → 开启水泵 ${r.action_duration} 秒
+          </span>
         </div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <span style="font-size:13px;color:var(--text-dim)">${r.enabled ? '启用' : '停用'}</span>
+        <div class="rule-actions">
+          <div class="rule-toggle ${r.enabled ? 'on' : ''}" onclick="toggleRule('${deviceId}',${r.id},${!r.enabled})" title="${r.enabled ? '点击停用' : '点击启用'}"></div>
+          <button class="btn btn-outline btn-sm" onclick="editRule('${deviceId}',${r.id},'${r.rule_name}','${r.condition_type}','${r.condition_operator}',${r.condition_value},${r.action_duration})">✏️</button>
+          <button class="btn btn-outline btn-sm" onclick="deleteRule('${deviceId}',${r.id})" style="color:var(--danger)">🗑️</button>
         </div>
       </div>
     `).join('');
   } catch (e) {
     list.innerHTML = '<div class="empty">加载失败: ' + e.message + '</div>';
+  }
+}
+
+function showRuleModal(deviceId, ruleId, name, condType, operator, value, duration) {
+  document.getElementById('rule-edit-id').value = ruleId || '';
+  document.getElementById('rule-name').value = name || '自动浇水';
+  document.getElementById('rule-condition-type').value = condType || 'soil_moisture';
+  document.getElementById('rule-operator').value = operator || 'lt';
+  document.getElementById('rule-value').value = value != null ? value : 25;
+  document.getElementById('rule-duration').value = duration != null ? duration : 30;
+  document.getElementById('rule-modal-title').textContent = ruleId ? '编辑规则' : '添加规则';
+  document.getElementById('rule-save-btn').textContent = ruleId ? '更新' : '保存';
+  document.getElementById('rule-modal').classList.add('show');
+}
+
+function closeRuleModal() {
+  document.getElementById('rule-modal').classList.remove('show');
+}
+
+async function saveRule() {
+  const editId = document.getElementById('rule-edit-id').value;
+  const deviceId = document.getElementById('rule-device').value || currentDevice;
+  if (!deviceId) { showToast('请先选择设备', 'error'); return; }
+
+  const body = {
+    rule_name: document.getElementById('rule-name').value || '自动浇水',
+    condition_type: document.getElementById('rule-condition-type').value,
+    condition_operator: document.getElementById('rule-operator').value,
+    condition_value: parseFloat(document.getElementById('rule-value').value) || 25,
+    action: 'pump_on',
+    action_duration: parseInt(document.getElementById('rule-duration').value) || 30,
+    enabled: true
+  };
+
+  try {
+    if (editId) {
+      await api(`/api/rules/${deviceId}/${editId}`, { method: 'PUT', body: JSON.stringify(body) });
+      showToast('规则已更新');
+    } else {
+      await api(`/api/rules/${deviceId}`, { method: 'POST', body: JSON.stringify(body) });
+      showToast('规则已创建');
+    }
+    closeRuleModal();
+    loadRules();
+  } catch (e) {
+    showToast('保存失败: ' + e.message, 'error');
+  }
+}
+
+function editRule(deviceId, ruleId, name, condType, operator, value, duration) {
+  showRuleModal(deviceId, ruleId, name, condType, operator, value, duration);
+}
+
+async function deleteRule(deviceId, ruleId) {
+  if (!confirm('确定要删除这条规则吗？')) return;
+  try {
+    await api(`/api/rules/${deviceId}/${ruleId}`, { method: 'DELETE' });
+    showToast('规则已删除');
+    loadRules();
+  } catch (e) {
+    showToast('删除失败: ' + e.message, 'error');
+  }
+}
+
+async function toggleRule(deviceId, ruleId, enabled) {
+  try {
+    // 获取当前规则数据
+    const rules = await api(`/api/rules/${deviceId}`);
+    const rule = rules.find(r => r.id === ruleId);
+    if (!rule) return;
+    await api(`/api/rules/${deviceId}/${ruleId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        rule_name: rule.rule_name,
+        condition_type: rule.condition_type,
+        condition_operator: rule.condition_operator,
+        condition_value: rule.condition_value,
+        action: rule.action,
+        action_duration: rule.action_duration,
+        enabled: enabled
+      })
+    });
+    showToast(enabled ? '规则已启用' : '规则已停用');
+    loadRules();
+  } catch (e) {
+    showToast('操作失败: ' + e.message, 'error');
   }
 }
 
@@ -854,6 +1016,13 @@ window.addEventListener('resize', () => {
       loadHistory(24);
     }
   }, 300);
+});
+
+// 点击 modal 遮罩关闭
+document.addEventListener('click', (e) => {
+  if (e.target.classList.contains('modal-overlay')) {
+    closeRuleModal();
+  }
 });
 </script>
 </body>

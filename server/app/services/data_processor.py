@@ -180,7 +180,6 @@ async def check_auto_rules(db: AsyncSession, device_id: str,
 
         if triggered and rule.action == "pump_on":
             logger.info(f"自动规则触发: {rule.rule_name}, 自动开泵 {rule.action_duration}秒")
-            # 通过 SDK API 下发命令
             from app.services.huawei_iot import huawei_iot
             await huawei_iot.send_command(device_id, {
                 "pump": "on",
