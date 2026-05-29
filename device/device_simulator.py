@@ -246,20 +246,6 @@ def parse_and_execute_command(client, payload: dict, request_id: str = ""):
     print(f"[执行] [RESP] 已回复平台: {response_topic}")
     print(f"[执行] [RESP] Payload: {json.dumps(platform_response, ensure_ascii=False)}")
     
-    # 2) 消息通道上行（给自建服务器）
-    # Topic: $oc/devices/{device_id}/sys/messages/up → 规则引擎 → devicelog
-    app_response = {
-        "type": "command_response",
-        "result": execution_result,
-        "message": message,
-        "service_id": service_id,
-        "command_name": command_name,
-        "paras": paras,
-        "timestamp": int(time.time())
-    }
-    client.publish(MESSAGE_TOPIC, json.dumps(app_response), qos=1)
-    print(f"[执行] [RESP] 已上报到消息通道 (messages/up): {json.dumps(app_response, ensure_ascii=False)}")
-
 def on_publish(client, userdata, mid, reason_code, properties=None):
     print(f"[上报] [OK] 数据上报成功, mid={mid}")
 
