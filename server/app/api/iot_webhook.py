@@ -1,17 +1,58 @@
 """
 华为云 IoTDA 数据接收 API
 华为云通过规则引擎将设备数据 HTTP 转发到此接口
-"""
 
+安全机制：
+华为云规则引擎转发时会自动在请求头带上 timestamp/nonce/signature，
+服务端使用约定的 Token 验证签名，防止伪造请求。
+"""
+import hashlib
 import json
 import logging
 
 from fastapi import APIRouter, Request, HTTPException
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.services.data_processor import process_sensor_data
 
 router = APIRouter(prefix="/iot", tags=["IoT数据接收"])
 logger = logging.getLogger(__name__)
+
+
+def _verify_webhook_signature(request: Request) -> bool:
+    """
+    验证华为云规则引擎 HTTP 转发的签名
+
+    华为云推送请求头包含三个字段：
+    - timestamp: 平台推送时的时间戳
+    - nonce: 平台生成的随机数
+    - signature: SHA256(token + timestamp + nonce 字典排序后)
+
+    参考：https://support.huaweicloud.com/usermanual-iothub/iot_01_0001.html
+    """
+    timestamp = request.headers.get("timestamp")
+    nonce = request.headers.get("nonce")
+    signature = request.headers.get("signature")
+
+    # 缺少任一字段 → 拒绝
+    if not all([timestamp, nonce, signature]):
+        logger.warning(f"[签名校验] 缺少签名头: timestamp={timestamp}, nonce={nonce}, signature={signature}")
+        return False
+
+    token = settings.IOT_WEBHOOK_TOKEN
+
+    # 将 token、timestamp、nonce 按字典序排序后拼接
+    parts = sorted([token, timestamp, nonce])
+    sorted_str = "".join(parts)
+
+    # SHA256 哈希
+    expected = hashlib.sha256(sorted_str.encode("utf-8")).hexdigest()
+
+    if signature != expected:
+        logger.warning(f"[签名校验] 签名不匹配, expected={expected[:16]}..., got={signature[:16]}...")
+        return False
+
+    return True
 
 
 @router.post("/data")
@@ -48,17 +89,21 @@ async def receive_iot_data(request: Request):
         }
     }
     """
+    # ===== 签名校验 =====
+    if not _verify_webhook_signature(request):
+        logger.error("[IoT接收] 签名校验失败，拒绝请求")
+        raise HTTPException(status_code=401, detail="签名校验失败")
+
     try:
-        # ===== 详细日志：记录收到的所有信息 =====
-        # 先读取原始请求体（未解析）
+        # 读取原始请求体
         raw_body = await request.body()
         logger.info("=" * 80)
-        logger.info("[IoT接收] 收到华为云转发请求")
-        
+        logger.info("[IoT接收] 收到华为云转发请求 (签名校验通过)")
+
         # 记录请求头
         headers = dict(request.headers)
         logger.info(f"[IoT接收] 请求头: {json.dumps(headers, ensure_ascii=False, indent=2)}")
-        
+
         # 记录原始 body（字符串形式）
         try:
             raw_text = raw_body.decode('utf-8')
@@ -66,15 +111,13 @@ async def receive_iot_data(request: Request):
         except Exception as e:
             logger.warning(f"[IoT接收] 原始请求体解码失败: {e}")
             logger.info(f"[IoT接收] 原始请求体 (bytes): {raw_body}")
-        
+
         # 解析 JSON
         body = None
         try:
-            # 尝试解析原始文本
             if 'raw_text' in locals():
                 body = json.loads(raw_text)
             else:
-                # 如果 raw_text 未定义，重新读取
                 body = await request.json()
         except json.JSONDecodeError as e:
             logger.error(f"[IoT接收] [FAIL] JSON 解析失败: {e}")
@@ -82,9 +125,8 @@ async def receive_iot_data(request: Request):
             raise HTTPException(status_code=400, detail="JSON 格式错误")
         except Exception as e:
             logger.error(f"[IoT接收] [FAIL] 解析异常: {e}")
-            body = await request.json()  # 最后尝试
-        
-        # 记录解析后的 body（美观格式）
+            body = await request.json()
+
         logger.info(f"[IoT接收] 解析后的 JSON (美观格式):\n{json.dumps(body, ensure_ascii=False, indent=2)}")
         logger.info(f"[IoT接收] 数据类型: {type(body)}")
         logger.info(f"[IoT接收] JSON 键列表: {list(body.keys()) if isinstance(body, dict) else 'Not a dict'}")
@@ -92,24 +134,19 @@ async def receive_iot_data(request: Request):
         # ===== 解析 device_id =====
         device_id = None
 
-        # 尝试从多种可能的地方获取 device_id
         if isinstance(body, dict):
-            # 方式1：直接字段
             device_id = (
                 body.get("device_id") or
                 body.get("deviceId") or
                 body.get("from")
             )
-            
-            # 方式2：华为云标准格式（notify_data.header.device_id）
+
             if not device_id and "notify_data" in body:
                 header = body.get("notify_data", {}).get("header", {})
                 device_id = header.get("device_id") or header.get("deviceId")
                 logger.info(f"[IoT接收] 从 notify_data.header 解析 device_id: {device_id}")
-            
-            # 方式3：从 topic 中解析
+
             if not device_id and "topic" in body:
-                # topic 格式：$oc/devices/{device_id}/sys/properties/report
                 topic = body.get("topic", "")
                 if "/devices/" in topic:
                     try:
@@ -117,8 +154,7 @@ async def receive_iot_data(request: Request):
                         logger.info(f"[IoT接收] 从 topic 解析 device_id: {device_id}")
                     except Exception:
                         pass
-            
-            # 方式4：从 services[0].deviceId 解析
+
             if not device_id and "services" in body:
                 services = body.get("services", [])
                 if services and isinstance(services[0], dict):
@@ -131,17 +167,15 @@ async def receive_iot_data(request: Request):
 
         logger.info(f"[IoT接收] 解析 device_id: {device_id}")
 
-        # ===== 解析 payload（设备上报的数据）=====
+        # ===== 解析 payload =====
         payload = None
-        
-        # 情况0：华为云标准转发格式（notify_data.body.services）
+
         if isinstance(body, dict) and "notify_data" in body:
             notify_data = body.get("notify_data", {})
             notify_body = notify_data.get("body", {})
             services = notify_body.get("services", [])
-            
+
             if services and isinstance(services[0], dict):
-                # 提取 services[0].properties 作为 payload
                 properties = services[0].get("properties", {})
                 if isinstance(properties, dict):
                     payload = properties
@@ -153,37 +187,30 @@ async def receive_iot_data(request: Request):
             else:
                 payload = body
                 logger.warning("[IoT接收] [WARN] notify_data 格式但未找到 services，使用原始 body")
-        
-        # 情况1：body 直接是设备上报的数据（已经包含 services）
+
         elif isinstance(body, dict) and "services" in body:
             payload = body
             logger.info("[IoT接收] 数据格式: 直接包含 services（华为云标准格式）")
-        
-        # 情况2：body 里有 body 字段
+
         elif isinstance(body, dict) and "body" in body:
             payload = body["body"]
             logger.info("[IoT接收] 数据格式: 包装在 body 字段中")
-            
-            # 如果 payload 是字符串，尝试解析 JSON
             if isinstance(payload, str):
                 try:
                     payload = json.loads(payload)
                     logger.info("[IoT接收] payload 字符串已解析为 JSON")
                 except Exception as e:
                     logger.warning(f"[IoT接收] [WARN] payload 字符串解析失败: {e}")
-        
-        # 情况3：body 里有 message 字段
+
         elif isinstance(body, dict) and "message" in body:
             payload = body["message"]
             logger.info("[IoT接收] 数据格式: 包装在 message 字段中")
-            
             if isinstance(payload, str):
                 try:
                     payload = json.loads(payload)
                 except Exception as e:
                     logger.warning(f"[IoT接收] [WARN] message 解析失败: {e}")
-        
-        # 情况4：body 直接是设备数据（扁平格式）
+
         else:
             payload = body
             logger.info("[IoT接收] 数据格式: 直接是设备数据（扁平格式）")
@@ -191,7 +218,6 @@ async def receive_iot_data(request: Request):
         logger.info(f"[IoT接收] 解析后的 payload: {json.dumps(payload, ensure_ascii=False)}")
         logger.info(f"[IoT接收] payload 类型: {type(payload)}")
 
-        # ===== 验证 payload =====
         if not isinstance(payload, dict):
             logger.error(f"[IoT接收] [FAIL] payload 不是 dict: {type(payload)}")
             raise HTTPException(status_code=400, detail="数据格式错误：payload 不是 JSON 对象")

@@ -1,0 +1,12 @@
+# ESP8266 设备端 Python 脚本依赖
+# 安装: pip install -r requirements.txt
+
+# MQTT 客户端（设备模拟器 device_simulator.py 使用）
+paho-mqtt>=1.6.0
+
+# 华为云 IoTDA SDK（命令下发测试 test_huawei_command.py 使用）
+huaweicloudsdkcore>=3.1.97
+huaweicloudsdkiotda>=3.1.97
+
+# 注意：test_huawei_command.py 需要引用 server 端的 config，
+# 请确保 server 目录的依赖也已安装（见 ../server/requirements.txt）

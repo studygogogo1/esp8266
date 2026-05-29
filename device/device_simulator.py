@@ -37,7 +37,10 @@ MQTT_HOST      = "923924d24d.st1.iotda-device.cn-east-3.myhuaweicloud.com"
 MQTT_PORT      = 1883                        # 非 TLS（与 ESP8266 当前配置一致）
 
 # 上报 Topic（设备 → 华为云）
-PUBLISH_TOPIC = f"$oc/devices/{DEVICE_ID}/sys/properties/report"
+# 属性上报：设备影子同步用
+PROPERTY_TOPIC = f"$oc/devices/{DEVICE_ID}/sys/properties/report"
+# 消息上报：设备间通信转发用（规则引擎数据来源=设备消息 → 转发目标=设备）
+MESSAGE_TOPIC = f"$oc/devices/{DEVICE_ID}/sys/messages/up"
 
 # 命令下发 Topic（华为云 → 设备）
 SUBSCRIBE_TOPIC = f"$oc/devices/{DEVICE_ID}/sys/commands/#"
@@ -124,23 +127,21 @@ class SensorSimulator:
         self.pump_status = status
 
 # ============================================================
-#                   MQTT 回调函数（paho v2 兼容写法）
+#               MQTT 回调函数（paho-mqtt v2 原生 API）
 # ============================================================
-def on_connect(client, userdata, flags, rc, properties=None):
-    """连接回调 - rc 为 int（0=成功）"""
+def on_connect(client, userdata, flags, reason_code, properties=None):
+    """v2 回调: reason_code 是 ReasonCode 对象，0 表示成功"""
+    rc = reason_code.value if hasattr(reason_code, 'value') else reason_code
     if rc == 0:
         print(f"[MQTT] [OK] 连接成功! device_id={DEVICE_ID}")
-        result, mid = client.subscribe(SUBSCRIBE_TOPIC, qos=1)
-        if result == mqtt.MQTT_ERR_SUCCESS:
-            print(f"[MQTT] [OK] 已订阅命令 Topic: {SUBSCRIBE_TOPIC}")
-        else:
-            print(f"[MQTT] [FAIL] 订阅失败, result={result}")
+        client.subscribe(SUBSCRIBE_TOPIC, qos=1)
+        print(f"[MQTT] [OK] 已订阅命令 Topic: {SUBSCRIBE_TOPIC}")
     else:
-        print(f"[MQTT] [FAIL] 连接失败, rc={rc}")
+        print(f"[MQTT] [FAIL] 连接失败, rc={rc}, reason={reason_code}")
         sys.exit(1)
 
-def on_subscribe(client, userdata, mid, granted_qos, properties=None):
-    print(f"[MQTT] [OK] 订阅确认, mid={mid}, qos={granted_qos}")
+def on_subscribe(client, userdata, mid, reason_code_list, properties=None):
+    print(f"[MQTT] [OK] 订阅确认, mid={mid}")
 
 def on_message(client, userdata, msg):
     """收到云端下发的命令"""
@@ -148,80 +149,108 @@ def on_message(client, userdata, msg):
     print(f"[命令] [RECV] 收到云端指令!")
     print(f"[命令] Topic: {msg.topic}")
     print(f"[命令] Payload (raw): {msg.payload}")
+    
+    # 从 Topic 中提取 request_id
+    # Topic 格式: $oc/devices/{id}/sys/commands/request_id={request_id}
+    request_id = ""
+    if "request_id=" in msg.topic:
+        request_id = msg.topic.split("request_id=")[-1]
+    
     try:
         payload = json.loads(msg.payload.decode("utf-8"))
         print(f"[命令] Payload (JSON):")
         print(json.dumps(payload, indent=2, ensure_ascii=False))
 
         # 解析常见命令格式
-        parse_and_execute_command(client, payload)
+        parse_and_execute_command(client, payload, request_id)
     except json.JSONDecodeError:
         print(f"[命令] [WARN] 无法解析 JSON，原始内容: {msg.payload}")
     except Exception as e:
         print(f"[命令] [FAIL] 解析异常: {e}")
     print(f"{'='*60}\n")
 
-def parse_and_execute_command(client, payload: dict):
+def parse_and_execute_command(client, payload: dict, request_id: str = ""):
     """
     解析云端下发的控制命令，模拟执行，并上报执行结果
+    
+    华为云下发命令格式（platform -> device）：
+    {
+        "paras": {"time": 3},           // 命令参数
+        "service_id": "openWater",      // 服务ID
+        "command_name": "openWater"     // 命令名
+    }
+    
+    支持的 service_id/command_name 组合：
+    - openWater: 水泵控制，paras.time = 开泵秒数（0 = 关泵）
+    - 也兼容自定义格式：paras 里有 "pump" 字段
     """
     print(f"[执行] [PARSE] 解析命令...")
-
-    # 情况1：直接是控制命令
-    if "pump" in payload:
-        pump_action = payload["pump"]
-        duration    = payload.get("duration", 0)
-
-        print(f"[执行] [PUMP] 水泵控制: {pump_action}")
-
-        # 模拟执行
-        if pump_action == "on":
+    
+    service_id   = payload.get("service_id", "")
+    command_name = payload.get("command_name", "")
+    paras        = payload.get("paras", {})
+    
+    print(f"[执行] [INFO] service_id={service_id}, command_name={command_name}")
+    print(f"[执行] [INFO] paras={json.dumps(paras, ensure_ascii=False)}")
+    
+    # ======== openWater 服务：水泵控制 ========
+    if service_id == "openWater":
+        pump_time = paras.get("time", 0)
+        
+        if pump_time > 0:
             sensor_simulator.set_pump(True)
             execution_result = "success"
-            message = f"水泵已开启"
+            message = f"水泵已开启，持续 {pump_time} 秒"
+            print(f"[执行] [PUMP] 开泵, 时长={pump_time}s")
         else:
             sensor_simulator.set_pump(False)
             execution_result = "success"
-            message = f"水泵已关闭"
-
-        if duration > 0:
-            print(f"[执行] [TIMER] 持续时间: {duration} 秒")
-            message += f"，将在 {duration}s 后自动关闭"
-            # 实际设备会用定时器，这里只是模拟
-
+            message = "水泵已关闭"
+            print(f"[执行] [PUMP] 关泵")
+        
         print(f"[执行] [OK] 模拟: {message}")
-
-        # 上报执行结果
-        response = {
-            "result": execution_result,
-            "message": message,
-            "timestamp": int(time.time())
-        }
-        client.publish(RESPONSE_TOPIC, json.dumps(response), qos=1)
-        print(f"[执行] [RESP] 已上报执行结果: {response}")
-
-    # 情况2：华为云封装格式（name + message）
-    elif "name" in payload and "message" in payload:
-        print(f"[执行] [HUAWEI] 华为云封装命令: name={payload['name']}")
-        try:
-            msg_str = payload["message"]
-            if isinstance(msg_str, str):
-                msg_data = json.loads(msg_str)
-            else:
-                msg_data = msg_str
-            parse_and_execute_command(client, msg_data)  # 递归解析
-        except Exception as e:
-            print(f"[执行] [WARN] 解析 message 字段失败: {e}")
-
-    # 情况3：直接打印未知格式
+    
     else:
         print(f"[执行] [WARN] 未知命令格式，完整内容:")
         print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return
+    
+    # ======== 上报执行结果 ========
+    
+    # 1) 华为云命令响应（平台要求格式，必须带 request_id）
+    # Topic: $oc/devices/{device_id}/sys/commands/response/request_id={request_id}
+    # 数据格式: {"result_code": 0, "response_name": "COMMAND_RESPONSE", "paras": {"result": "success"}}
+    response_topic = f"$oc/devices/{DEVICE_ID}/sys/commands/response/request_id={request_id}"
+    platform_response = {
+        "result_code": 0,
+        "response_name": "COMMAND_RESPONSE",
+        "paras": {
+            "result": execution_result
+        }
+    }
+    client.publish(response_topic, json.dumps(platform_response), qos=1)
+    print(f"[执行] [RESP] 已回复平台: {response_topic}")
+    print(f"[执行] [RESP] Payload: {json.dumps(platform_response, ensure_ascii=False)}")
+    
+    # 2) 消息通道上行（给自建服务器）
+    # Topic: $oc/devices/{device_id}/sys/messages/up → 规则引擎 → devicelog
+    app_response = {
+        "type": "command_response",
+        "result": execution_result,
+        "message": message,
+        "service_id": service_id,
+        "command_name": command_name,
+        "paras": paras,
+        "timestamp": int(time.time())
+    }
+    client.publish(MESSAGE_TOPIC, json.dumps(app_response), qos=1)
+    print(f"[执行] [RESP] 已上报到消息通道 (messages/up): {json.dumps(app_response, ensure_ascii=False)}")
 
-def on_publish(client, userdata, mid, properties=None):
+def on_publish(client, userdata, mid, reason_code, properties=None):
     print(f"[上报] [OK] 数据上报成功, mid={mid}")
 
-def on_disconnect(client, userdata, rc):
+def on_disconnect(client, userdata, flags, reason_code, properties=None):
+    rc = reason_code.value if hasattr(reason_code, 'value') else reason_code
     print(f"[MQTT] [WARN] 连接断开, rc={rc}")
     if rc != 0:
         print(f"[MQTT] [RETRY] 尝试自动重连...")
@@ -283,23 +312,12 @@ def main():
     print(f"[配置] Host     : {MQTT_HOST}:{args.port}")
     print()
 
-    # -------- 创建 MQTT 客户端 --------
-    # 兼容 paho-mqtt v1 和 v2
-    try:
-        # paho-mqtt v2
-        client = mqtt.Client(
-            client_id=client_id,
-            clean_session=True,
-            protocol=mqtt.MQTTv311,
-            callback_api_version=mqtt.CallbackAPIVersion.VERSION1
-        )
-    except AttributeError:
-        # paho-mqtt v1（不支持 callback_api_version）
-        client = mqtt.Client(
-            client_id=client_id,
-            clean_session=True,
-            protocol=mqtt.MQTTv311
-        )
+    # -------- 创建 MQTT 客户端（paho-mqtt v2 原生 API）--------
+    client = mqtt.Client(
+        mqtt.CallbackAPIVersion.VERSION2,
+        client_id=client_id,
+        protocol=mqtt.MQTTv311
+    )
 
     client.username_pw_set(username, password)
 
@@ -334,6 +352,9 @@ def main():
 
     # -------- 主循环：定时上报数据 --------
     print(f"\n[主循环] 开始模拟上报，间隔 = {args.interval}s，按 Ctrl+C 退出\n")
+    print(f"[主循环] 属性上报 Topic: {PROPERTY_TOPIC}")
+    print(f"[主循环] 消息上报 Topic: {MESSAGE_TOPIC}")
+    print()
     report_count = 0
     last_password_update = time.time()
 
@@ -344,12 +365,17 @@ def main():
             payload = json.dumps(data)
 
             print(f"[上报] [SEND] 第 {report_count} 次上报:")
-            print(f"[上报] Topic  : {PUBLISH_TOPIC}")
-            print(f"[上报] Payload: {payload}")
+            print(f"[上报]   Payload: {payload}")
 
-            info = client.publish(PUBLISH_TOPIC, payload, qos=1)
-            # 等待发布完成（最多等 5 秒）
-            info.wait_for_publish(timeout=5)
+            # 1) 属性上报（设备影子同步）
+            print(f"[上报]   属性 → {PROPERTY_TOPIC}")
+            info1 = client.publish(PROPERTY_TOPIC, payload, qos=1)
+            info1.wait_for_publish(timeout=5)
+
+            # 2) 消息上报（设备间通信转发）
+            print(f"[上报]   消息 → {MESSAGE_TOPIC}")
+            info2 = client.publish(MESSAGE_TOPIC, payload, qos=1)
+            info2.wait_for_publish(timeout=5)
 
             # 检查是否需要更新动态密码（仅动态模式）
             if args.mode == "dynamic":

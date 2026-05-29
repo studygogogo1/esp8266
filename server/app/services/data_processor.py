@@ -5,12 +5,11 @@
 2. 存储到数据库
 3. 触发告警检查
 4. 触发自动控制规则
-5. 推送 WebSocket 实时消息给 App
 """
 import json
 import logging
 from datetime import datetime
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.sensor import SensorData
@@ -18,7 +17,6 @@ from app.models.device import Device
 from app.models.pump import PumpLog
 from app.models.alert import Alert, AlertRule
 from app.models.rule import AutoRule
-from app.core.websocket import ws_manager
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +39,8 @@ async def process_sensor_data(db: AsyncSession, device_id: str, data: dict):
     pump_status = data.get("pump_status", False)
     wifi_signal = data.get("wifi_signal")
     firmware_version = data.get("firmware_version", "1.0.0")
-    
-    # ===== 增强日志：打印收到的原始数据 =====
+
+    # 日志：打印收到的原始数据
     logger.info("=" * 80)
     logger.info(f"[数据处理] 收到设备 {device_id} 的数据:")
     logger.info(f"[数据处理] 原始 data 对象: {json.dumps(data, ensure_ascii=False, indent=2) if isinstance(data, dict) else data}")
@@ -95,20 +93,6 @@ async def process_sensor_data(db: AsyncSession, device_id: str, data: dict):
     # 4. 检查自动控制规则（如土壤湿度低则自动浇水）
     await check_auto_rules(db, device_id, temperature, humidity, soil_moisture)
 
-    # 5. 推送实时数据给 App（WebSocket）
-    await ws_manager.broadcast({
-        "type": "sensor_update",
-        "device_id": device_id,
-        "data": {
-            "temperature": temperature,
-            "humidity": humidity,
-            "soil_moisture": soil_moisture,
-            "pump_status": pump_status,
-            "wifi_signal": wifi_signal,
-            "timestamp": datetime.now().isoformat(),
-        }
-    })
-
     logger.info(f"数据处理完成: device={device_id}, temp={temperature}, humi={humidity}, soil={soil_moisture}")
 
 
@@ -158,26 +142,12 @@ async def check_alert_rules(db: AsyncSession, device_id: str,
                 message=message,
             )
             db.add(alert)
-            # 推送告警给 App
-            await ws_manager.broadcast({
-                "type": "alert",
-                "device_id": device_id,
-                "alert": {
-                    "type": rule.rule_type,
-                    "message": message,
-                    "value": value,
-                    "threshold": rule.threshold,
-                }
-            })
             logger.warning(f"告警触发: {message}")
 
 
 async def check_auto_rules(db: AsyncSession, device_id: str,
                             temperature, humidity, soil_moisture):
     """检查自动控制规则"""
-    from app.services.huawei_iot import huawei_iot
-    from app.core.database import AsyncSessionLocal
-
     result = await db.execute(
         select(AutoRule).where(AutoRule.device_id == device_id, AutoRule.enabled == True)
     )
@@ -203,7 +173,8 @@ async def check_auto_rules(db: AsyncSession, device_id: str,
 
         if triggered and rule.action == "pump_on":
             logger.info(f"自动规则触发: {rule.rule_name}, 自动开泵 {rule.action_duration}秒")
-            # 下发开泵指令
+            # 通过 SDK API 下发命令
+            from app.services.huawei_iot import huawei_iot
             await huawei_iot.send_command(device_id, {
                 "pump": "on",
                 "duration": rule.action_duration

@@ -1,16 +1,16 @@
 """
 FastAPI 主应用入口
+设备数据通过 HTTP 转发接收（POST /api/iot/data），命令通过 SDK API 下发
 """
 import logging
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from app.core.database import init_db
-from app.api import devices, sensor, pump, alerts, rules, firmware, iot_webhook, websocket
+from app.api import devices, sensor, pump, alerts, rules, firmware, iot_webhook
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 
@@ -27,7 +27,11 @@ async def lifespan(app: FastAPI):
     logger.info("服务器启动中...")
     await init_db()
     logger.info("数据库初始化完成")
+    logger.info("设备数据接收: HTTP 转发 → POST /api/iot/data")
+    logger.info("命令下发: SDK API → CreateCommand")
+
     yield
+
     logger.info("服务器关闭")
 
 
@@ -55,7 +59,6 @@ app.include_router(pump.router, prefix="/api")
 app.include_router(alerts.router, prefix="/api")
 app.include_router(rules.router, prefix="/api")
 app.include_router(firmware.router, prefix="/api")
-app.include_router(websocket.router)
 
 
 # 静态文件挂载（JS/CSS/图片等，如果需要）

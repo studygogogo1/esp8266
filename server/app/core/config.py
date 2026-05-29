@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     HUAWEI_ENDPOINT: str = "923924d24d.st1.iotda-app.cn-east-3.myhuaweicloud.com"
     HUAWEI_IOTDA_INSTANCE_ID: str = "e01941fb-c614-415f-98cb-5d776280d89a"
 
+    # 华为云规则引擎 HTTP 转发签名 Token
+    # 在华为云创建规则引擎转发目标时，填入此 Token
+    IOT_WEBHOOK_TOKEN: str = "e4ef6da527ec5461b69a52fa558af908"
+
     # OTA
     FIRMWARE_DIR: str = "./firmware"
     RELEASES_DIR: str = "./releases"
