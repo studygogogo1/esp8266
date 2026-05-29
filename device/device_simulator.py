@@ -34,7 +34,7 @@ DEVICE_ID      = "6a17a638e094d61592419546_00001"
 DEVICE_SECRET  = "Cyy542100312"
 
 MQTT_HOST      = "923924d24d.st1.iotda-device.cn-east-3.myhuaweicloud.com"
-MQTT_PORT      = 1883                        # 非 TLS（与 ESP8266 当前配置一致）
+MQTT_PORT      = 8883                        # TLS 加密端口（华为云推荐）
 
 # 上报 Topic（设备 → 华为云）
 # 消息上报 → 规则引擎 → HTTP 转发 → 自建服务器
@@ -62,12 +62,13 @@ def get_utc_timestamp_hour():
 
 def generate_password(timestamp: str, secret: str) -> str:
     """
-    华为云规则: Password = Hex(HMAC-SHA256(key=timestamp, data=secret))
-    注意：key 和 data 的顺序容易搞反！
+    华为云规则: Password = Hex(HMAC-SHA256(key=secret, msg=timestamp))
+    注意：key 是设备密钥，msg 是时间戳！顺序很容易搞反！
+    正确顺序: hmac.new(key=secret, msg=timestamp)
     """
     return hmac.new(
-        timestamp.encode("utf-8"),
-        secret.encode("utf-8"),
+        secret.encode("utf-8"),     # key = 设备密钥
+        timestamp.encode("utf-8"),  # msg = UTC时间戳(YYYYMMDDHH)
         hashlib.sha256
     ).hexdigest()
 

@@ -15,7 +15,10 @@ import time
 
 from huaweicloudsdkcore.auth.credentials import BasicCredentials, DerivedCredentials
 from huaweicloudsdkcore.region.region import Region as CoreRegion
-from huaweicloudsdkiotda.v5 import *
+# 显式导入需要的类，避免 import * 漏掉某些类
+from huaweicloudsdkiotda.v5 import IoTDAClient
+from huaweicloudsdkiotda.v5.model.create_command_request import CreateCommandRequest
+from huaweicloudsdkiotda.v5.model.device_command_request import DeviceCommandRequest
 from huaweicloudsdkiotda.v5.region.iotda_region import IoTDARegion
 
 # ============================================================
