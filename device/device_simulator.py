@@ -269,7 +269,9 @@ def report_sensor_data(client, report_count_ref):
     print(f"[上报]   消息 → {MESSAGE_TOPIC}")
     info = client.publish(MESSAGE_TOPIC, payload, qos=1)
     info.wait_for_publish(timeout=5)
-    print(f"[上报] [OK] 数据上报成功, mid={mid}")
+
+def on_publish(client, userdata, mid, reason_code, properties=None):
+    pass
 
 def on_disconnect(client, userdata, flags, reason_code, properties=None):
     rc = reason_code.value if hasattr(reason_code, 'value') else reason_code
