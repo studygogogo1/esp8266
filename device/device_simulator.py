@@ -1,12 +1,11 @@
 """
-ESP8266 设备模拟器 - 完整版
+ESP8266 设备模拟器
 功能：
 1. 模拟设备连接华为云 IoTDA（MQTT）
 2. 定时上报模拟的传感器数据（温度、湿度、土壤湿度等）
 3. 订阅云端指令 Topic，接收并解析控制命令
-4. 模拟执行指令，并上报执行结果
+4. 模拟执行指令（含自动关泵定时器），并上报执行结果
 5. 自动重连、动态密码更新
-6. 日志记录
 
 使用方法：
   python device_simulator.py                # 使用动态密码（默认）
@@ -23,6 +22,7 @@ import os
 import random
 import ssl
 import sys
+import threading
 import time
 import datetime
 import paho.mqtt.client as mqtt
@@ -37,9 +37,7 @@ MQTT_HOST      = "923924d24d.st1.iotda-device.cn-east-3.myhuaweicloud.com"
 MQTT_PORT      = 1883                        # 非 TLS（与 ESP8266 当前配置一致）
 
 # 上报 Topic（设备 → 华为云）
-# 属性上报：设备影子同步用
-PROPERTY_TOPIC = f"$oc/devices/{DEVICE_ID}/sys/properties/report"
-# 消息上报：设备间通信转发用（规则引擎数据来源=设备消息 → 转发目标=设备）
+# 消息上报 → 规则引擎 → HTTP 转发 → 自建服务器
 MESSAGE_TOPIC = f"$oc/devices/{DEVICE_ID}/sys/messages/up"
 
 # 命令下发 Topic（华为云 → 设备）
@@ -122,9 +120,25 @@ class SensorSimulator:
             ]
         }
 
-    def set_pump(self, status: bool):
-        """设置水泵状态"""
+    def set_pump(self, status: bool, duration: float = 0):
+        """
+        设置水泵状态
+        duration: 开泵时长（秒），>0 时自动在 duration 秒后关泵
+        """
         self.pump_status = status
+        # 取消之前的定时器（如果存在）
+        if hasattr(self, '_pump_timer') and self._pump_timer:
+            self._pump_timer.cancel()
+        # 如果指定了时长，启动定时器自动关泵
+        if status and duration > 0:
+            self._pump_timer = threading.Timer(duration, self._auto_stop_pump)
+            self._pump_timer.daemon = True
+            self._pump_timer.start()
+
+    def _auto_stop_pump(self):
+        """定时器回调：自动关泵"""
+        self.pump_status = False
+        print(f"\n[水泵] [AUTO] 定时器触发，水泵自动关闭")
 
 # ============================================================
 #               MQTT 回调函数（paho-mqtt v2 原生 API）
@@ -198,10 +212,10 @@ def parse_and_execute_command(client, payload: dict, request_id: str = ""):
         pump_time = paras.get("time", 0)
         
         if pump_time > 0:
-            sensor_simulator.set_pump(True)
+            sensor_simulator.set_pump(True, duration=pump_time)
             execution_result = "success"
             message = f"水泵已开启，持续 {pump_time} 秒"
-            print(f"[执行] [PUMP] 开泵, 时长={pump_time}s")
+            print(f"[执行] [PUMP] 开泵, 时长={pump_time}s（{pump_time}秒后自动关泵）")
         else:
             sensor_simulator.set_pump(False)
             execution_result = "success"
@@ -352,8 +366,7 @@ def main():
 
     # -------- 主循环：定时上报数据 --------
     print(f"\n[主循环] 开始模拟上报，间隔 = {args.interval}s，按 Ctrl+C 退出\n")
-    print(f"[主循环] 属性上报 Topic: {PROPERTY_TOPIC}")
-    print(f"[主循环] 消息上报 Topic: {MESSAGE_TOPIC}")
+    print(f"[主循环] 上报 Topic: {MESSAGE_TOPIC}")
     print()
     report_count = 0
     last_password_update = time.time()
@@ -367,15 +380,10 @@ def main():
             print(f"[上报] [SEND] 第 {report_count} 次上报:")
             print(f"[上报]   Payload: {payload}")
 
-            # 1) 属性上报（设备影子同步）
-            print(f"[上报]   属性 → {PROPERTY_TOPIC}")
-            info1 = client.publish(PROPERTY_TOPIC, payload, qos=1)
-            info1.wait_for_publish(timeout=5)
-
-            # 2) 消息上报（设备间通信转发）
+            # 消息上报 → 规则引擎 → HTTP 转发 → 自建服务器
             print(f"[上报]   消息 → {MESSAGE_TOPIC}")
-            info2 = client.publish(MESSAGE_TOPIC, payload, qos=1)
-            info2.wait_for_publish(timeout=5)
+            info = client.publish(MESSAGE_TOPIC, payload, qos=1)
+            info.wait_for_publish(timeout=5)
 
             # 检查是否需要更新动态密码（仅动态模式）
             if args.mode == "dynamic":
