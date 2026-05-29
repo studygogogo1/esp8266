@@ -31,6 +31,6 @@ async def get_db():
 
 async def init_db():
     """初始化数据库，创建所有表"""
-    from app.models import sensor, device, pump, alert, rule, firmware  # noqa
+    from app.models import sensor, device, alert, rule, firmware  # noqa
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
