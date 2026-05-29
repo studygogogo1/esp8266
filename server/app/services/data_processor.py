@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.sensor import SensorData
 from app.models.device import Device
-from app.models.pump import PumpLog
 from app.models.alert import Alert, AlertRule
 from app.models.rule import AutoRule
 
@@ -53,6 +52,7 @@ async def process_sensor_data(db: AsyncSession, device_id: str, data: dict):
         temperature=temperature,
         humidity=humidity,
         soil_moisture=soil_moisture,
+        pump_status=pump_status,
     )
     db.add(sensor_record)
 
@@ -186,11 +186,3 @@ async def check_auto_rules(db: AsyncSession, device_id: str,
                 "pump": "on",
                 "duration": rule.action_duration
             })
-            # 记录水泵日志
-            pump_log = PumpLog(
-                device_id=device_id,
-                action="on",
-                source="auto",
-                duration=rule.action_duration,
-            )
-            db.add(pump_log)

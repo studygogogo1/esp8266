@@ -53,6 +53,7 @@ async def get_sensor_history(
                 "temperature": r.temperature,
                 "humidity": r.humidity,
                 "soil_moisture": r.soil_moisture,
+                "pump_status": r.pump_status,
                 "time": r.created_at.isoformat(),
             }
             for r in reversed(records)  # 按时间正序返回

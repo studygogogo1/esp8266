@@ -131,8 +131,6 @@ async def control_pump(
     db: AsyncSession = Depends(get_db)
 ):
     """控制水泵开关"""
-    from app.models.pump import PumpLog
-
     if req.action not in ("on", "off"):
         raise HTTPException(status_code=400, detail="action 只能是 on 或 off")
 
@@ -144,14 +142,5 @@ async def control_pump(
     success = await huawei_iot.send_command(device_id, command)
     if not success:
         raise HTTPException(status_code=502, detail="指令下发失败，请检查设备是否在线")
-
-    # 记录操作日志
-    pump_log = PumpLog(
-        device_id=device_id,
-        action=req.action,
-        source="app",
-        duration=req.duration if req.action == "on" else None,
-    )
-    db.add(pump_log)
 
     return {"success": True, "message": f"水泵已{'开启' if req.action == 'on' else '关闭'}"}

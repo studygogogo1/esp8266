@@ -76,11 +76,12 @@ def generate_password(timestamp: str, secret: str) -> str:
 # ============================================================
 class SensorSimulator:
     """模拟传感器数据，带一定的连续性和随机波动"""
-    def __init__(self):
+    def __init__(self, on_pump_change=None):
         self.temperature = 22.0
         self.humidity = 55.0
         self.soil_moisture = 40.0
         self.pump_status = False
+        self._on_pump_change = on_pump_change  # 泵状态变化回调
 
     def generate(self):
         """
@@ -125,20 +126,27 @@ class SensorSimulator:
         设置水泵状态
         duration: 开泵时长（秒），>0 时自动在 duration 秒后关泵
         """
+        old_status = self.pump_status
         self.pump_status = status
         # 取消之前的定时器（如果存在）
         if hasattr(self, '_pump_timer') and self._pump_timer:
             self._pump_timer.cancel()
+            self._pump_timer = None
         # 如果指定了时长，启动定时器自动关泵
         if status and duration > 0:
             self._pump_timer = threading.Timer(duration, self._auto_stop_pump)
             self._pump_timer.daemon = True
             self._pump_timer.start()
+        # 状态变化时触发回调
+        if old_status != status and self._on_pump_change:
+            self._on_pump_change(status, duration if status else 0)
 
     def _auto_stop_pump(self):
         """定时器回调：自动关泵"""
         self.pump_status = False
         print(f"\n[水泵] [AUTO] 定时器触发，水泵自动关闭")
+        if self._on_pump_change:
+            self._on_pump_change(False, 0)
 
 # ============================================================
 #               MQTT 回调函数（paho-mqtt v2 原生 API）
@@ -246,7 +254,21 @@ def parse_and_execute_command(client, payload: dict, request_id: str = ""):
     print(f"[执行] [RESP] 已回复平台: {response_topic}")
     print(f"[执行] [RESP] Payload: {json.dumps(platform_response, ensure_ascii=False)}")
     
-def on_publish(client, userdata, mid, reason_code, properties=None):
+# ============================================================
+#              上报方法
+# ============================================================
+
+def report_sensor_data(client, report_count_ref):
+    """上报传感器数据到 messages/up → 规则引擎 → HTTP 转发 → 自建服务器"""
+    report_count_ref[0] += 1
+    data = sensor_simulator.generate()
+    payload = json.dumps(data)
+
+    print(f"[上报] [SEND] 第 {report_count_ref[0]} 次上报:")
+    print(f"[上报]   Payload: {payload}")
+    print(f"[上报]   消息 → {MESSAGE_TOPIC}")
+    info = client.publish(MESSAGE_TOPIC, payload, qos=1)
+    info.wait_for_publish(timeout=5)
     print(f"[上报] [OK] 数据上报成功, mid={mid}")
 
 def on_disconnect(client, userdata, flags, reason_code, properties=None):
@@ -259,7 +281,7 @@ def on_disconnect(client, userdata, flags, reason_code, properties=None):
 #                   主程序
 # ============================================================
 
-# 全局传感器模拟器
+# 全局传感器模拟器（回调在 main 中注册）
 sensor_simulator = SensorSimulator()
 
 def main():
@@ -350,26 +372,24 @@ def main():
     # 等待连接建立
     time.sleep(2)
 
+    # -------- 注册泵状态变化回调：变化时立即上报 --------
+    report_count_ref = [0]
+
+    def on_pump_changed(status, duration):
+        print(f"\n[水泵] [EVENT] 泵状态变化 → {'开' if status else '关'}, 时长={duration}s, 立即上报传感器数据...")
+        report_sensor_data(client, report_count_ref)
+
+    sensor_simulator._on_pump_change = on_pump_changed
+
     # -------- 主循环：定时上报数据 --------
     print(f"\n[主循环] 开始模拟上报，间隔 = {args.interval}s，按 Ctrl+C 退出\n")
     print(f"[主循环] 上报 Topic: {MESSAGE_TOPIC}")
     print()
-    report_count = 0
     last_password_update = time.time()
 
     try:
         while True:
-            report_count += 1
-            data    = sensor_simulator.generate()
-            payload = json.dumps(data)
-
-            print(f"[上报] [SEND] 第 {report_count} 次上报:")
-            print(f"[上报]   Payload: {payload}")
-
-            # 消息上报 → 规则引擎 → HTTP 转发 → 自建服务器
-            print(f"[上报]   消息 → {MESSAGE_TOPIC}")
-            info = client.publish(MESSAGE_TOPIC, payload, qos=1)
-            info.wait_for_publish(timeout=5)
+            report_sensor_data(client, report_count_ref)
 
             # 检查是否需要更新动态密码（仅动态模式）
             if args.mode == "dynamic":

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Float, String, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, Float, String, DateTime, Boolean, ForeignKey
 from sqlalchemy.sql import func
 from app.core.database import Base
 
@@ -12,4 +12,5 @@ class SensorData(Base):
     temperature = Column(Float, nullable=True, comment="温度(°C)")
     humidity = Column(Float, nullable=True, comment="空气湿度(%RH)")
     soil_moisture = Column(Float, nullable=True, comment="土壤湿度(%)")
+    pump_status = Column(Boolean, nullable=True, comment="水泵状态(True=开/False=关)")
     created_at = Column(DateTime, server_default=func.now(), index=True)
