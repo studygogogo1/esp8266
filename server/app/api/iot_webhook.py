@@ -173,11 +173,19 @@ async def receive_iot_data(request: Request):
         if isinstance(body, dict) and "notify_data" in body:
             notify_data = body.get("notify_data", {})
             notify_body = notify_data.get("body", {})
-            services = notify_body.get("services", [])
+
+            # 华为云设备消息上报的嵌套结构：
+            # notify_data.body.content.services[0].properties
+            content = notify_body.get("content", {})
+            services = content.get("services", [])
+
+            if not services:
+                # 备选：有些格式 services 直接在 notify_data.body 下
+                services = notify_body.get("services", [])
 
             if services and isinstance(services[0], dict):
                 properties = services[0].get("properties", {})
-                if isinstance(properties, dict):
+                if isinstance(properties, dict) and properties:
                     payload = properties
                     logger.info("[IoT接收] 数据格式: 华为云 notify_data 格式，已提取 properties")
                     logger.info(f"[IoT接收] 提取的 properties: {json.dumps(payload, ensure_ascii=False)}")
