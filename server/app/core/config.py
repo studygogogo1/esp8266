@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8000
     SECRET_KEY: str = "change-this-secret-key"
-    DEBUG: bool = True
+    DEBUG: bool = False
 
     # 数据库
     DATABASE_URL: str = "sqlite+aiosqlite:///./iot_data.db"
