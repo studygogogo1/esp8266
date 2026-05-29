@@ -40,12 +40,6 @@
 #define OLED_SCL        D3      // GPIO0  - OLED I2C 时钟线
 #endif
 
-// ==================== OLED 配置 ====================
-#define SCREEN_WIDTH    128
-#define SCREEN_HEIGHT   64
-#define OLED_ADDRESS    0x3C
-#define OLED_RESET      -1
-
 // ==================== 系统参数 ====================
 #define REPORT_INTERVAL     10000   // 数据上报间隔 10秒
 #define PUMP_MAX_RUNTIME    30000   // 水泵最长运行 30秒
@@ -54,9 +48,12 @@
 #define NTP_OFFSET          28800   // UTC+8 = 8*3600秒
 
 // ==================== 华为云 MQTT Topic ====================
-#define TOPIC_PROP_REPORT  "$oc/devices/6a17a638e094d61592419546_00001/sys/properties/report"
-#define TOPIC_MSG_DOWN      "$oc/devices/6a17a638e094d61592419546_00001/sys/messages/down"
-#define TOPIC_MSG_UP        "$oc/devices/6a17a638e094d61592419546_00001/sys/messages/up"
+// 上报数据 Topic（→ 规则引擎 → HTTP 转发 → 自建服务器）
+#define TOPIC_MSG_UP       "$oc/devices/6a17a638e094d61592419546_00001/sys/messages/up"
+// 订阅命令 Topic（接收云端下发的控制指令）
+#define TOPIC_CMD_SUB      "$oc/devices/6a17a638e094d61592419546_00001/sys/commands/#"
+// 命令响应 Topic 前缀（回复到 commands/response/request_id=xxx，不会触发 messages/up 规则）
+#define TOPIC_CMD_RESP     "$oc/devices/6a17a638e094d61592419546_00001/sys/commands/response/request_id="
 
 // ==================== 固件版本 ====================
 #define FIRMWARE_VERSION    "1.0.0"

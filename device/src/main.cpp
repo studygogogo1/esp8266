@@ -2,7 +2,7 @@
  * ESP8266 IoT 自动浇水系统 - 主程序
  *
  * SIMULATION_MODE=1: 不接硬件，用模拟数据测试 MQTT 通信链路
- * SIMULATION_MODE=0: 正式模式，连接 DHT11/土壤湿度/继电器/OLED
+ * SIMULATION_MODE=0: 正式模式，连接 DHT11/土壤湿度/继电器
  *
  * 开发环境: VS Code + PlatformIO
  * 开发板:   NodeMCU 1.0 (ESP-12E)
@@ -18,10 +18,6 @@
 
 #if !SIMULATION_MODE
 #include <DHT.h>
-#include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-#include "oled_display.h"
 #include "sensor_reader.h"
 #include "pump_controller.h"
 #endif
@@ -38,7 +34,6 @@ PubSubClient mqttClient(espClient);
 #define MQTT_BUFFER_SIZE 512
 
 #if !SIMULATION_MODE
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 DHT dht(DHT11_PIN, DHT11);
 #endif
 
@@ -260,9 +255,9 @@ bool mqttConnect() {
         Serial.println("[MQTT] 连接成功!");
 
         // 订阅命令 Topic
-        if (mqttClient.subscribe(TOPIC_MSG_DOWN)) {
+        if (mqttClient.subscribe(TOPIC_CMD_SUB)) {
             Serial.print("[MQTT] 已订阅: ");
-            Serial.println(TOPIC_MSG_DOWN);
+            Serial.println(TOPIC_CMD_SUB);
         } else {
             Serial.println("[MQTT] 订阅失败!");
         }
@@ -297,6 +292,14 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     Serial.print("]: ");
     Serial.println(msg);
 
+    // 从 Topic 中提取 request_id
+    // Topic 格式: $oc/devices/{id}/sys/commands/request_id={request_id}
+    String requestId = "";
+    const char* reqPos = strstr(topic, "request_id=");
+    if (reqPos) {
+        requestId = String(reqPos + strlen("request_id="));
+    }
+
     StaticJsonDocument<128> doc;
     if (deserializeJson(doc, msg)) {
         Serial.println("[MQTT] JSON 解析失败");
@@ -305,6 +308,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
     if (doc.containsKey("pump")) {
         const char* cmd = doc["pump"];
+        const char* result = "success";
 
 #if !SIMULATION_MODE
         if (strcmp(cmd, "on") == 0) {
@@ -318,14 +322,20 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         Serial.println(cmd);
 #endif
 
-        // 回复执行结果
-        StaticJsonDocument<128> reply;
-        reply["command"] = "pump";
-        reply["status"] = "success";
-        reply["timestamp"] = ntpGetTimestamp();
+        // 回复执行结果到 commands/response（不会触发 messages/up 规则引擎转发）
+        String respTopic = TOPIC_CMD_RESP + requestId;
+        StaticJsonDocument<128> resp;
+        resp["result_code"] = 0;
+        resp["response_name"] = "COMMAND_RESPONSE";
+        JsonObject respParas = resp.createNestedObject("paras");
+        respParas["result"] = result;
         char buf[128];
-        serializeJson(reply, buf);
-        mqttClient.publish(TOPIC_MSG_UP, buf);
+        serializeJson(resp, buf);
+        mqttClient.publish(respTopic.c_str(), buf);
+        Serial.print("[MQTT] 已回复 ");
+        Serial.print(respTopic);
+        Serial.print(": ");
+        Serial.println(buf);
     }
 }
 
@@ -334,7 +344,7 @@ void mqttReportData(float temp, float humi, float soil, bool pumpOn, int rssi) {
     StaticJsonDocument<512> doc;
     JsonArray servicesArr = doc.createNestedArray("services");
     JsonObject svc = servicesArr.createNestedObject();
-    svc["service_id"] = "sensor";
+    svc["service_id"] = "sensor_data";
     JsonObject props = svc.createNestedObject("properties");
     props["temperature"] = temp;
     props["humidity"] = humi;
@@ -349,7 +359,7 @@ void mqttReportData(float temp, float humi, float soil, bool pumpOn, int rssi) {
     Serial.println("[MQTT] 上报数据:");
     Serial.println(buf);
 
-    if (mqttClient.publish(TOPIC_PROP_REPORT, buf)) {
+    if (mqttClient.publish(TOPIC_MSG_UP, buf)) {
         Serial.println("[MQTT] 上报成功!");
     } else {
         Serial.println("[MQTT] 上报失败!");
@@ -383,8 +393,6 @@ void setup() {
 
     // 硬件初始化（仅正式模式）
 #if !SIMULATION_MODE
-    oledBegin();
-    oledShowSplash("ESP8266 IoT", "Starting...");
     pumpBegin();
     sensorBegin();
 #endif
@@ -427,11 +435,13 @@ void loop() {
         lastReport = now;
 
         float temp, humi, soil;
+        bool pumpOn;
 
 #if SIMULATION_MODE
         temp = simTemperature(now);
         humi = simHumidity(now);
         soil = simSoilMoisture(now);
+        pumpOn = false;  // 模拟模式无真实水泵，命令处理在 mqttCallback 中打印日志
         Serial.println("--- 模拟数据 ---");
         Serial.print("  T:"); Serial.print(temp,1); Serial.print("C  H:"); Serial.print(humi,0); Serial.print("%  Soil:"); Serial.print(soil,0); Serial.println("%");
 #else
@@ -439,11 +449,12 @@ void loop() {
         temp = data.temperature;
         humi = data.humidity;
         soil = data.soilMoisture;
-        oledShowDashboard(temp, humi, soil, pumpIsOn(), WiFi.RSSI(), mqttClient.connected());
+        pumpOn = pumpIsOn();
+        Serial.print("[Sensor] T:"); Serial.print(temp,1); Serial.print("C  H:"); Serial.print(humi,0); Serial.print("%  Soil:"); Serial.print(soil,0); Serial.print("%  Pump:"); Serial.println(pumpOn ? "ON" : "OFF");
 #endif
 
         if (mqttClient.connected()) {
-            mqttReportData(temp, humi, soil, false, WiFi.RSSI());
+            mqttReportData(temp, humi, soil, pumpOn, WiFi.RSSI());
         } else {
             Serial.println("[LOOP] MQTT 未连接，跳过上报");
         }
