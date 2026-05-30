@@ -40,12 +40,17 @@
 #define OLED_SCL        D3      // GPIO0  - OLED I2C 时钟线
 #endif
 
+// ==================== OLED 配置 ====================
+#define SCREEN_WIDTH    128
+#define SCREEN_HEIGHT   64
+#define OLED_ADDRESS    0x3C
+#define OLED_RESET      -1
+
 // ==================== 系统参数 ====================
 #define REPORT_INTERVAL     10000   // 数据上报间隔 10秒
 #define PUMP_MAX_RUNTIME    30000   // 水泵最长运行 30秒
 #define MQTT_RECONNECT_MS   5000    // MQTT 重连间隔 5秒
 #define WIFI_RECONNECT_MS   30000   // WiFi 断开重连间隔 30秒
-#define NTP_OFFSET          28800   // UTC+8 = 8*3600秒
 
 // ==================== 华为云 MQTT Topic ====================
 // 上报数据 Topic（→ 规则引擎 → HTTP 转发 → 自建服务器）

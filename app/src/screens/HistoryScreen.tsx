@@ -62,9 +62,9 @@ export default function HistoryScreen() {
       const step = Math.max(1, Math.floor(records.length / 50));
       const sampled = records.filter((_: any, i: number) => i % step === 0);
 
-      const labels = sampled.map((_: any, i: number) =>
+      const labels = sampled.map((item: any, i: number) =>
         i % Math.max(1, Math.floor(sampled.length / 6)) === 0
-          ? new Date(sampled[i].time).toLocaleTimeString('zh-CN', {
+          ? new Date(item.event_time || item.time).toLocaleTimeString('zh-CN', {
               hour: '2-digit',
               minute: '2-digit',
             })

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from app.core.database import init_db
-from app.api import devices, sensor, alerts, rules, firmware, iot_webhook
+from app.api import devices, sensor, alerts, rules, firmware, iot_webhook, pump
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 
@@ -58,6 +58,7 @@ app.include_router(sensor.router, prefix="/api")
 app.include_router(alerts.router, prefix="/api")
 app.include_router(rules.router, prefix="/api")
 app.include_router(firmware.router, prefix="/api")
+app.include_router(pump.router, prefix="/api")
 
 
 # 静态文件挂载（JS/CSS/图片等，如果需要）

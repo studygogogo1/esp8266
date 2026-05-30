@@ -230,10 +230,43 @@ async def receive_iot_data(request: Request):
             logger.error(f"[IoT接收] [FAIL] payload 不是 dict: {type(payload)}")
             raise HTTPException(status_code=400, detail="数据格式错误：payload 不是 JSON 对象")
 
+        # ===== 提取 event_time（设备采集时间）=====
+        event_time_str = None
+        # 华为云标准转发格式: body 直接有 event_time
+        if isinstance(body, dict):
+            event_time_str = body.get("event_time")
+        # notify_data 格式
+        if not event_time_str and isinstance(body, dict) and "notify_data" in body:
+            notify_body = body.get("notify_data", {}).get("body", {})
+            content = notify_body.get("content", notify_body)
+            event_time_str = content.get("event_time")
+        # services 嵌套格式
+        if not event_time_str and isinstance(payload, dict) and "services" in payload:
+            services = payload.get("services", [])
+            if services and isinstance(services[0], dict):
+                event_time_str = services[0].get("event_time")
+        # payload 本身有 event_time
+        if not event_time_str and isinstance(payload, dict):
+            event_time_str = payload.get("event_time")
+
+        # 解析 event_time 字符串为 datetime
+        event_time = None
+        if event_time_str:
+            try:
+                from datetime import datetime as dt
+                # 兼容 "2026-05-30T13:05:05" 和 "2026-05-30T05:05:05.000Z"
+                clean = event_time_str.replace("Z", "").split(".")[0]
+                event_time = dt.fromisoformat(clean)
+                logger.info(f"[IoT接收] event_time(设备采集时间): {event_time_str} -> {event_time}")
+            except Exception as e:
+                logger.warning(f"[IoT接收] event_time 解析失败: {event_time_str}, 错误: {e}")
+        else:
+            logger.info("[IoT接收] 未找到 event_time，采集时间将为空")
+
         # ===== 处理数据 =====
         logger.info(f"[IoT接收] 开始处理数据: device_id={device_id}")
         async with AsyncSessionLocal() as db:
-            await process_sensor_data(db, device_id, payload)
+            await process_sensor_data(db, device_id, payload, event_time)
             await db.commit()
             logger.info(f"[IoT接收] [OK] 数据已保存到数据库")
 

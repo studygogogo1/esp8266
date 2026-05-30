@@ -54,7 +54,8 @@ async def get_sensor_history(
                 "humidity": r.humidity,
                 "soil_moisture": r.soil_moisture,
                 "pump_status": r.pump_status,
-                "time": r.created_at.isoformat(),
+                "time": r.created_at.isoformat() if r.created_at else None,
+                "event_time": r.event_time.isoformat() if r.event_time else None,
             }
             for r in reversed(records)  # 按时间正序返回
         ]

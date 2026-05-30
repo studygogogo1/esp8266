@@ -158,7 +158,7 @@ export default function AlertsScreen() {
           <View key={a.id} style={[styles.alertItem, !a.is_read && styles.alertUnread]}>
             <Text style={styles.alertMsg}>{a.message}</Text>
             <Text style={styles.alertTime}>
-              {new Date(a.time).toLocaleString('zh-CN')}
+              {new Date(a.event_time || a.time).toLocaleString('zh-CN')}
             </Text>
           </View>
         ))

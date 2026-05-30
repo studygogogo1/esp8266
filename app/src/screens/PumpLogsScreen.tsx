@@ -52,7 +52,7 @@ export default function PumpLogsScreen() {
         )}
       </View>
       <Text style={styles.logTime}>
-        {new Date(item.time).toLocaleString('zh-CN', {
+        {new Date(item.event_time || item.time).toLocaleString('zh-CN', {
           month: '2-digit',
           day: '2-digit',
           hour: '2-digit',

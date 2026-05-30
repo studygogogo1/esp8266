@@ -51,6 +51,7 @@ async def get_alerts(
                 "threshold": a.threshold,
                 "is_read": a.is_read,
                 "time": a.created_at.isoformat(),
+                "event_time": a.event_time.isoformat() if a.event_time else None,
             }
             for a in alerts
         ]

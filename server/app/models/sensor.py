@@ -13,4 +13,5 @@ class SensorData(Base):
     humidity = Column(Float, nullable=True, comment="空气湿度(%RH)")
     soil_moisture = Column(Float, nullable=True, comment="土壤湿度(%)")
     pump_status = Column(Boolean, nullable=True, comment="水泵状态(True=开/False=关)")
-    created_at = Column(DateTime, server_default=func.now(), index=True)
+    created_at = Column(DateTime, server_default=func.now(), index=True, comment="服务器接收时间")
+    event_time = Column(DateTime, nullable=True, comment="设备采集时间(设备上报的event_time)")

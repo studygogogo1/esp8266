@@ -4,7 +4,7 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include <WiFiUdp.h>
+#include <ESP8266HTTPClient.h>
 #include <bearssl/bearssl_hash.h>
 #include <bearssl/bearssl_hmac.h>
 #include "config.h"
@@ -15,66 +15,92 @@
 extern WiFiClient espClient;
 extern PubSubClient mqttClient;
 
-// ==================== NTP 时间同步 ====================
-// 获取 UTC 时间戳字符串，格式: 20260528T203000Z
+// ==================== HTTP 获取时间戳（不走 UDP 123 端口，避免被路由器拦截）====================
+// 获取 UTC 时间戳字符串，格式: YYYYMMDDHH（华为云 clientId 需要）
 inline String ntpGetTimestamp() {
-    WiFiUDP ntpUDP;
-    const char* ntpServer = "ntp.aliyun.com";
-    const int ntpPort = 123;
+    WiFiClient client;
 
-    ntpUDP.begin(ntpPort);
+    // 方式1: 淘宝时间服务
+    const char* host = "api.m.taobao.com";
+    const char* path = "/rest/api3.do?api=mtop.common.getTimestamp";
+    Serial.print("[NTP] 尝试淘宝时间服务...");
+    if (client.connect(host, 80)) {
+        client.print(String("GET ") + path + " HTTP/1.1\r\n" +
+                     "Host: " + host + "\r\n" +
+                     "Connection: close\r\n\r\n");
+        int timeout = 0;
+        while (!client.available() && timeout < 20) { delay(100); timeout++; }
+        if (client.available()) {
+            String line;
+            while (client.available()) {
+                line = client.readStringUntil('\n');
+                if (line.indexOf("\"data\"") >= 0) {
+                    int pos = line.indexOf("\"data\"");
+                    String numStr = line.substring(pos + 7);
+                    int end2 = 0;
+                    while (end2 < numStr.length() && (numStr[end2] >= '0' && numStr[end2] <= '9')) end2++;
+                    unsigned long ms = strtoul(numStr.substring(0, end2).c_str(), NULL, 10);
+                    unsigned long unixTime = ms / 1000UL;
 
-    // 发送 NTP 请求
-    byte packet[48];
-    memset(packet, 0, 48);
-    packet[0] = 0b11100011; // LI, Version, Mode
-    packet[1] = 0;          // Stratum
-    packet[2] = 6;          // Polling Interval
-    packet[3] = 0xEC;       // Peer Clock Precision
+                    struct tm* tm_info = gmtime((time_t*)&unixTime);
+                    char ts[11];
+                    snprintf(ts, sizeof(ts), "%04d%02d%02d%02d",
+                             tm_info->tm_year + 1900, tm_info->tm_mon + 1,
+                             tm_info->tm_mday, tm_info->tm_hour);
 
-    if (ntpUDP.beginPacket(ntpServer, ntpPort) != 1) {
-        ntpUDP.end();
-        return "";
+                    Serial.print("成功! UTC时间戳: ");
+                    Serial.println(ts);
+                    client.stop();
+                    return String(ts);
+                }
+            }
+        }
+        Serial.println("失败(无data字段)");
+        client.stop();
+    } else {
+        Serial.println("失败(连接超时)");
     }
-    ntpUDP.write(packet, 48);
-    ntpUDP.endPacket();
 
-    // 等待响应
-    int timeout = 0;
-    while (ntpUDP.parsePacket() == 0 && timeout < 10) {
-        delay(100);
-        timeout++;
+    // 方式2: 从 HTTP 响应头获取 Date
+    Serial.print("[NTP] 尝试从HTTP Date头获取...");
+    if (client.connect("www.baidu.com", 80)) {
+        client.print("GET / HTTP/1.1\r\nHost: www.baidu.com\r\nConnection: close\r\n\r\n");
+        int timeout = 0;
+        while (!client.available() && timeout < 20) { delay(100); timeout++; }
+        while (client.available()) {
+            String line = client.readStringUntil('\n');
+            if (line.startsWith("Date:")) {
+                const char* months[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                                        "Jul","Aug","Sep","Oct","Nov","Dec"};
+                int d = line.indexOf(",") + 2;
+                while (line[d] == ' ') d++;
+                int dd = 0;
+                while (line[d] >= '0' && line[d] <= '9') { dd = dd * 10 + (line[d] - '0'); d++; }
+                d++;
+                String mon = line.substring(d, d + 3);
+                d += 4;
+                int yy = 0;
+                while (d < line.length() && line[d] >= '0' && line[d] <= '9') { yy = yy * 10 + (line[d] - '0'); d++; }
+                d++;
+                int hh = 0;
+                while (d < line.length() && line[d] >= '0' && line[d] <= '9') { hh = hh * 10 + (line[d] - '0'); d++; }
+                int mm = 0;
+                for (int i = 0; i < 12; i++) { if (mon == months[i]) { mm = i + 1; break; } }
+
+                char ts[11];
+                snprintf(ts, sizeof(ts), "%04d%02d%02d%02d", yy, mm, dd, hh);
+                Serial.print("成功! UTC时间戳: ");
+                Serial.println(ts);
+                client.stop();
+                return String(ts);
+            }
+        }
+        Serial.println("失败(无Date头)");
+        client.stop();
     }
 
-    if (ntpUDP.parsePacket() == 0) {
-        ntpUDP.end();
-        Serial.println("[NTP] 时间同步失败");
-        return "";
-    }
-
-    ntpUDP.read(packet, 48);
-    ntpUDP.end();
-
-    // NTP 时间从 1900年1月1日开始，转换为 Unix 时间戳（1970年起）
-    unsigned long highWord = word(packet[40], packet[41]);
-    unsigned long lowWord  = word(packet[42], packet[43]);
-    unsigned long secsSince1900 = highWord << 16 | lowWord;
-    unsigned long unixTime = secsSince1900 - 2208988800UL + NTP_OFFSET;
-
-    // 格式化为 20260528T203000Z
-    struct tm* tm_info = gmtime((time_t*)&unixTime);
-    char ts[17];
-    snprintf(ts, sizeof(ts), "%04d%02d%02dT%02d%02d%02dZ",
-             tm_info->tm_year + 1900,
-             tm_info->tm_mon + 1,
-             tm_info->tm_mday,
-             tm_info->tm_hour,
-             tm_info->tm_min,
-             tm_info->tm_sec);
-
-    Serial.print("[NTP] 时间戳: ");
-    Serial.println(ts);
-    return String(ts);
+    Serial.println("[NTP] 所有时间源均失败");
+    return "";
 }
 
 // ==================== Hex 编码 ====================

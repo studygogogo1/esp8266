@@ -20,7 +20,7 @@ from app.models.rule import AutoRule
 logger = logging.getLogger(__name__)
 
 
-async def process_sensor_data(db: AsyncSession, device_id: str, data: dict):
+async def process_sensor_data(db: AsyncSession, device_id: str, data: dict, event_time=None):
     """
     处理传感器上报数据
     data 格式: {
@@ -31,6 +31,7 @@ async def process_sensor_data(db: AsyncSession, device_id: str, data: dict):
         "wifi_signal": -65,
         "firmware_version": "1.0.0"
     }
+    event_time: 设备上报的采集时间（datetime 对象），如为 None 则留空
     """
     temperature = data.get("temperature")
     humidity = data.get("humidity")
@@ -53,6 +54,7 @@ async def process_sensor_data(db: AsyncSession, device_id: str, data: dict):
         humidity=humidity,
         soil_moisture=soil_moisture,
         pump_status=pump_status,
+        event_time=event_time,
     )
     db.add(sensor_record)
 
@@ -95,7 +97,7 @@ async def process_sensor_data(db: AsyncSession, device_id: str, data: dict):
     await db.flush()
 
     # 3. 检查告警规则
-    await check_alert_rules(db, device_id, temperature, humidity, soil_moisture)
+    await check_alert_rules(db, device_id, temperature, humidity, soil_moisture, event_time)
 
     # 4. 检查自动控制规则（如土壤湿度低则自动浇水）
     await check_auto_rules(db, device_id, temperature, humidity, soil_moisture)
@@ -104,7 +106,7 @@ async def process_sensor_data(db: AsyncSession, device_id: str, data: dict):
 
 
 async def check_alert_rules(db: AsyncSession, device_id: str,
-                             temperature, humidity, soil_moisture):
+                             temperature, humidity, soil_moisture, event_time=None):
     """检查告警规则，触发则创建告警记录"""
     result = await db.execute(
         select(AlertRule).where(AlertRule.device_id == device_id, AlertRule.enabled == True)
@@ -147,6 +149,7 @@ async def check_alert_rules(db: AsyncSession, device_id: str,
                 value=value,
                 threshold=rule.threshold,
                 message=message,
+                event_time=event_time,  # 保存设备采集时间
             )
             db.add(alert)
             logger.warning(f"告警触发: {message}")
