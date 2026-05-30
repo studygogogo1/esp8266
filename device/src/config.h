@@ -13,7 +13,7 @@
 // ==================== 华为云 IoTDA MQTT 配置 ====================
 // MQTT 接入地址（设备侧）
 #define MQTT_HOST       "923924d24d.st1.iotda-device.cn-east-3.myhuaweicloud.com"
-#define MQTT_PORT       8883    // MQTTS 加密端口（TLS）
+#define MQTT_PORT       1883    // 非加密端口（绕过 PubSubClient TLS 兼容问题）
 
 // 设备信息（华为云控制台 → 设备详情页获取）
 #define DEVICE_ID       "6a17a638e094d61592419546_00001"
@@ -22,14 +22,14 @@
 // 如果你有设备密钥(DEVICE_SECRET)，代码会动态生成 clientId/password
 // 如果没有，就用下面预生成的值（注意：会过期！）
 #define MQTT_USERNAME   "6a17a638e094d61592419546_00001"
-#define MQTT_PASSWORD   "30c33ada73b645ff138847dfd0f1b57649c642cd8845e73aafae636422b3a201"
-#define MQTT_CLIENTID   "6a17a638e094d61592419546_00001_0_0_2026052916"
+#define MQTT_PASSWORD   "c45d75f6216842a052a5c8f38408195d0a5f0e6fcab40c291390f45b7ec5dfeb"
+#define MQTT_CLIENTID   "6a17a638e094d61592419546_00001_0_0_2026052814"
 
 // 设备密钥（动态生成密码时需要，从华为云设备详情页复制）
 // 如果填了，代码会忽略上面的预生成密码，自动用密钥动态计算
 // 填入密钥后，把下面的 USE_DYNAMIC_PASSWORD 改为 1
-#define DEVICE_SECRET   ""
-#define USE_DYNAMIC_PASSWORD  0  // 1=用密钥动态生成密码, 0=用预生成密码
+#define DEVICE_SECRET   "Cyy542100312"
+#define USE_DYNAMIC_PASSWORD  1  // 1=用密钥动态生成密码, 0=用预生成密码
 
 // ==================== 引脚定义 ====================
 #if !SIMULATION_MODE
@@ -40,12 +40,6 @@
 #define OLED_SCL        D3      // GPIO0  - OLED I2C 时钟线
 #endif
 
-// ==================== OLED 配置 ====================
-#define SCREEN_WIDTH    128
-#define SCREEN_HEIGHT   64
-#define OLED_ADDRESS    0x3C
-#define OLED_RESET      -1
-
 // ==================== 系统参数 ====================
 #define REPORT_INTERVAL     10000   // 数据上报间隔 10秒
 #define PUMP_MAX_RUNTIME    30000   // 水泵最长运行 30秒
@@ -54,9 +48,12 @@
 #define NTP_OFFSET          28800   // UTC+8 = 8*3600秒
 
 // ==================== 华为云 MQTT Topic ====================
-#define TOPIC_PROP_REPORT  "$oc/devices/6a17a638e094d61592419546_00001/sys/properties/report"
-#define TOPIC_MSG_DOWN      "$oc/devices/6a17a638e094d61592419546_00001/sys/messages/down"
-#define TOPIC_MSG_UP        "$oc/devices/6a17a638e094d61592419546_00001/sys/messages/up"
+// 上报数据 Topic（→ 规则引擎 → HTTP 转发 → 自建服务器）
+#define TOPIC_MSG_UP       "$oc/devices/6a17a638e094d61592419546_00001/sys/messages/up"
+// 订阅命令 Topic（接收云端下发的控制指令）
+#define TOPIC_CMD_SUB      "$oc/devices/6a17a638e094d61592419546_00001/sys/commands/#"
+// 命令响应 Topic 前缀（回复到 commands/response/request_id=xxx，不会触发 messages/up 规则）
+#define TOPIC_CMD_RESP     "$oc/devices/6a17a638e094d61592419546_00001/sys/commands/response/request_id="
 
 // ==================== 固件版本 ====================
 #define FIRMWARE_VERSION    "1.0.0"

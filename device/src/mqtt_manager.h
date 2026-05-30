@@ -5,7 +5,8 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <WiFiUdp.h>
-#include <sha256.h>
+#include <bearssl/bearssl_hash.h>
+#include <bearssl/bearssl_hmac.h>
 #include "config.h"
 #include "oled_display.h"
 #include "pump_controller.h"
@@ -76,72 +77,33 @@ inline String ntpGetTimestamp() {
     return String(ts);
 }
 
-// ==================== HMAC-SHA256 计算 ====================
-// 使用 ESP8266 内置 SHA256 实现 HMAC-SHA256
-inline void hmacSha256(const char* key, size_t keyLen,
-                       const char* msg, size_t msgLen,
-                       uint8_t* output) {
-    uint8_t k_prime[64];
-    memset(k_prime, 0, 64);
-
-    // 如果密钥 > 64字节，先 hash
-    if (keyLen > 64) {
-        Sha256 sha;
-        sha.begin();
-        sha.write((const uint8_t*)key, keyLen);
-        sha.end(k_prime);
-    } else {
-        memcpy(k_prime, key, keyLen);
-    }
-
-    // 内层: H(K XOR ipad || message)
-    uint8_t inner[64 + 128]; // 64(ipad) + msg
-    for (int i = 0; i < 64; i++) inner[i] = k_prime[i] ^ 0x36;
-    memcpy(inner + 64, msg, msgLen);
-
-    Sha256 sha;
-    uint8_t innerHash[32];
-    sha.begin();
-    sha.write(inner, 64 + msgLen);
-    sha.end(innerHash);
-
-    // 外层: H(K XOR opad || innerHash)
-    uint8_t outer[64 + 32];
-    for (int i = 0; i < 64; i++) outer[i] = k_prime[i] ^ 0x5C;
-    memcpy(outer + 64, innerHash, 32);
-
-    sha.begin();
-    sha.write(outer, 96);
-    sha.end(output);
-}
-
-// Base64 编码
-inline String base64Encode(const uint8_t* data, size_t len) {
-    const char base64Chars[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+// ==================== Hex 编码 ====================
+inline String hexEncode(const uint8_t* data, size_t len) {
     String result;
-    result.reserve(len * 4 / 3 + 4);
-
-    for (size_t i = 0; i < len; i += 3) {
-        uint32_t triple = ((uint32_t)data[i] << 16);
-        if (i + 1 < len) triple |= ((uint32_t)data[i + 1] << 8);
-        if (i + 2 < len) triple |= data[i + 2];
-
-        result += base64Chars[(triple >> 18) & 0x3F];
-        result += base64Chars[(triple >> 12) & 0x3F];
-        result += (i + 1 < len) ? base64Chars[(triple >> 6) & 0x3F] : '=';
-        result += (i + 2 < len) ? base64Chars[triple & 0x3F] : '=';
+    result.reserve(len * 2);
+    const char hex[] = "0123456789abcdef";
+    for (size_t i = 0; i < len; i++) {
+        result += hex[data[i] >> 4];
+        result += hex[data[i] & 0x0F];
     }
     return result;
 }
 
 // ==================== 生成 MQTT 密码 ====================
-// 华为云 IoTDA: Password = Base64(HMAC-SHA256(deviceSecret, timestamp))
+// 华为云 IoTDA: Password = Hex(HMAC-SHA256(key=时间戳, data=设备密钥))
 inline String generateMqttPassword(const String& timestamp) {
+    br_hmac_key_context kc;
+    br_hmac_key_init(&kc, &br_sha256_vtable,
+                     timestamp.c_str(), timestamp.length());
+
+    br_hmac_context ctx;
+    br_hmac_init(&ctx, &kc, 0);
+    br_hmac_update(&ctx, DEVICE_SECRET, strlen(DEVICE_SECRET));
+
     uint8_t hash[32];
-    hmacSha256(DEVICE_SECRET, strlen(DEVICE_SECRET),
-               timestamp.c_str(), timestamp.length(), hash);
-    return base64Encode(hash, 32);
+    br_hmac_out(&ctx, hash);
+
+    return hexEncode(hash, 32);
 }
 
 // ==================== MQTT 连接 ====================
@@ -161,24 +123,30 @@ inline bool mqttConnect() {
     Serial.println("[MQTT] 正在连接华为云 IoTDA...");
     Serial.print("[MQTT] Client ID: ");
     Serial.println(clientId);
+    Serial.print("[MQTT] Username: ");
+    Serial.println(username);
+    Serial.print("[MQTT] Password (前16字符): ");
+    Serial.println(password.substring(0, 16));
 
-    // 设置 MQTT 连接参数
+    // 设置 TLS（跳过证书验证，测试阶段用）
+    espClient.setInsecure();
     mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
-    mqttClient.setClientId(clientId.c_str());
-    mqttClient.setCredentials(username.c_str(), password.c_str());
+    mqttClient.setBufferSize(MQTT_BUFFER_SIZE);
 
-    // 连接
-    bool connected = mqttClient.connect(clientId.c_str(),
-                                         username.c_str(),
-                                         password.c_str());
+    // 连接（PubSubClient 标准 API：connect(clientId, username, password)）
+    bool connected = mqttClient.connect(
+        clientId.c_str(),
+        username.c_str(),
+        password.c_str()
+    );
 
     if (connected) {
         Serial.println("[MQTT] 连接成功!");
 
         // 订阅命令 Topic
-        if (mqttClient.subscribe(TOPIC_MSG_DOWN)) {
+        if (mqttClient.subscribe(TOPIC_CMD_SUB)) {
             Serial.print("[MQTT] 已订阅: ");
-            Serial.println(TOPIC_MSG_DOWN);
+            Serial.println(TOPIC_CMD_SUB);
         } else {
             Serial.println("[MQTT] 订阅失败!");
         }
@@ -215,26 +183,39 @@ inline void mqttCallback(char* topic, byte* payload, unsigned int length) {
     }
 
     // 检查 pump 命令
-    if (doc.containsKey("pump")) {
+    if (doc.containsKey("pump") || doc.containsKey("service_id")) {
         const char* cmd = doc["pump"];
-        if (strcmp(cmd, "on") == 0) {
-            int duration = doc["duration"] | 30; // 默认30秒
+        String result = "success";
+
+        if (cmd && strcmp(cmd, "on") == 0) {
+            int duration = doc["duration"] | 30;
             pumpOn(duration);
-        } else if (strcmp(cmd, "off") == 0) {
+        } else if (cmd && strcmp(cmd, "off") == 0) {
             pumpOff();
         }
 
-        // 回复执行结果到华为云
+        // 回复命令响应到 commands/response（华为云要求）
+        // 从 Topic 中提取 request_id
+        String requestId = "";
+        const char* reqPos = strstr(topic, "request_id=");
+        if (reqPos) {
+            requestId = String(reqPos + strlen("request_id="));
+        }
+
+        String respTopic = String(TOPIC_CMD_RESP) + requestId;
         StaticJsonDocument<128> reply;
-        reply["command"] = "pump";
-        reply["status"] = "success";
-        reply["timestamp"] = ntpGetTimestamp();
+        reply["result_code"] = 0;
+        reply["response_name"] = "COMMAND_RESPONSE";
+        JsonObject paras = reply.createNestedObject("paras");
+        paras["result"] = result;
 
         char replyBuf[128];
         serializeJson(reply, replyBuf);
-        mqttClient.publish(TOPIC_MSG_UP, replyBuf);
+        mqttClient.publish(respTopic.c_str(), replyBuf);
 
-        Serial.print("[MQTT] 已回复: ");
+        Serial.print("[MQTT] 已回复命令响应 ");
+        Serial.print(respTopic);
+        Serial.print(": ");
         Serial.println(replyBuf);
     }
 }
@@ -244,26 +225,22 @@ inline void mqttReportData(float temp, float humi, float soil,
                             bool pumpOn, int rssi) {
     StaticJsonDocument<512> doc;
 
-    // 华为云 IoTDA 属性上报格式
-    JsonObject service = doc.createNestedObject("services");
-    JsonArray services = service.createNestedArray("service_id"); // workaround
-    // 正确格式:
-    doc.clear();
+    // 华为云 IoTDA 标准格式（必须与 Python 版一致！）
     JsonArray servicesArr = doc.createNestedArray("services");
     JsonObject svc = servicesArr.createNestedObject();
-    svc["service_id"] = "sensor";
+    svc["service_id"] = "sensor_data";
     JsonObject props = svc.createNestedObject("properties");
-    props["temperature"] = temp;
-    props["humidity"] = humi;
+    props["temperature"]   = temp;
+    props["humidity"]      = humi;
     props["soil_moisture"] = soil;
-    props["pump_status"] = pumpOn;
-    props["wifi_signal"] = rssi;
+    props["pump_status"]   = pumpOn;
+    props["wifi_signal"]   = rssi;
     props["firmware_version"] = FIRMWARE_VERSION;
 
     char buf[512];
     serializeJson(doc, buf);
 
-    if (mqttClient.publish(TOPIC_PROP_REPORT, buf)) {
+    if (mqttClient.publish(TOPIC_MSG_UP, buf)) {
         Serial.print("[MQTT] 数据上报成功: ");
         Serial.println(buf);
     } else {
