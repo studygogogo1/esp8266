@@ -231,21 +231,32 @@ async def receive_iot_data(request: Request):
             raise HTTPException(status_code=400, detail="数据格式错误：payload 不是 JSON 对象")
 
         # ===== 提取 event_time（设备采集时间）=====
+        # 优先取设备上报的 event_time（services[0].event_time，北京时间）
+        # 其次取其他位置的 event_time
         event_time_str = None
-        # 华为云标准转发格式: body 直接有 event_time
-        if isinstance(body, dict):
-            event_time_str = body.get("event_time")
-        # notify_data 格式
-        if not event_time_str and isinstance(body, dict) and "notify_data" in body:
+
+        # 1. 优先：notify_data.body.content.services[0].event_time（设备上报的北京时间）
+        if isinstance(body, dict) and "notify_data" in body:
             notify_body = body.get("notify_data", {}).get("body", {})
             content = notify_body.get("content", notify_body)
-            event_time_str = content.get("event_time")
-        # services 嵌套格式
-        if not event_time_str and isinstance(payload, dict) and "services" in payload:
-            services = payload.get("services", [])
+            services = content.get("services", [])
             if services and isinstance(services[0], dict):
                 event_time_str = services[0].get("event_time")
-        # payload 本身有 event_time
+
+        # 2. 其次：body.services[0].event_time
+        if not event_time_str and isinstance(body, dict) and "services" in body:
+            services = body.get("services", [])
+            if services and isinstance(services[0], dict):
+                event_time_str = services[0].get("event_time")
+
+        # 3. 再次：body.event_time
+        if not event_time_str and isinstance(body, dict):
+            et = body.get("event_time")
+            # 跳过华为云外层事件时间（格式如 "20260530T054554Z" 不是 ISO 8601）
+            if et and et[4:5] == "-":  # ISO 格式才用: "2026-05-30T..."
+                event_time_str = et
+
+        # 4. 最后：payload.event_time
         if not event_time_str and isinstance(payload, dict):
             event_time_str = payload.get("event_time")
 

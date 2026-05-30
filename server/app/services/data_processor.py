@@ -54,6 +54,7 @@ async def process_sensor_data(db: AsyncSession, device_id: str, data: dict, even
         humidity=humidity,
         soil_moisture=soil_moisture,
         pump_status=pump_status,
+        created_at=datetime.now(),
         event_time=event_time,
     )
     db.add(sensor_record)
@@ -149,7 +150,8 @@ async def check_alert_rules(db: AsyncSession, device_id: str,
                 value=value,
                 threshold=rule.threshold,
                 message=message,
-                event_time=event_time,  # 保存设备采集时间
+                created_at=datetime.now(),
+                event_time=event_time,
             )
             db.add(alert)
             logger.warning(f"告警触发: {message}")

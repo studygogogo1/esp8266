@@ -14,7 +14,7 @@ class Alert(Base):
     threshold = Column(Float, nullable=True, comment="告警阈值")
     message = Column(String(256))
     is_read = Column(Boolean, default=False)
-    created_at = Column(DateTime, server_default=func.now(), index=True)
+    created_at = Column(DateTime, index=True)
     event_time = Column(DateTime, nullable=True, comment="设备采集时间(关联的传感器数据event_time)")
 
 
